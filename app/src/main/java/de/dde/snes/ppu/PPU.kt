@@ -9,6 +9,8 @@ import de.dde.snes.memory.MemoryMapping
 import de.dde.snes.memory.ShortAddress
 
 class PPU(
+    var frameReady = false
+    val videoBuffer = IntArray(256 * 240) // Resolução máxima SNES
     private val snes: SNES
 ) : MemoryMapping {
     val oam = OAM()
@@ -147,6 +149,7 @@ class PPU(
 
                 if (voffset == FIRST_V_OFFSET + snes.version.heigth) {
                     inVBlank = true
+                    frameReady = true
                     if (snes.processor.nmiEnabled)
                     snes.processor.nmiRequested = true
                 }
