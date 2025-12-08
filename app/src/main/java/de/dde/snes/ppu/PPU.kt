@@ -575,6 +575,33 @@ class PPU(
         }
     }
 
+
+    // --- DEBUG RENDERER ---
+    private fun getIntColor(c: Int): Int {
+        val r = (c and 0x1F) shl 3
+        val g = ((c shr 5) and 0x1F) shl 3
+        val b = ((c shr 10) and 0x1F) shl 3
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    private fun renderScanline(y: Int) {
+        if (y < 0 || y >= 224) return
+        try {
+            val bgColor = getIntColor(cgram.colors[0].value)
+            for (x in 0 until 256) {
+                val index = y * 256 + x
+                if (index < videoBuffer.size) {
+                    val vramIndex = index % vram.vram.size
+                    val pixelData = vram.vram[vramIndex].toInt()
+                    if (pixelData != 0) {
+                        videoBuffer[index] = bgColor or 0x00505050
+                    } else {
+                        videoBuffer[index] = bgColor
+                    }
+                }
+            }
+        } catch (e: Exception) {}
+    }
     companion object {
         const val M7HOFS = 0x10001
         const val M7VOFS = 0x10002
@@ -689,11 +716,8 @@ enum class ObjectSize {
         _32x32_64x64 -> 64
     }
 
-    companion object {
-        fun byCode(code: Int) = values()[code]
-    }
 
-    // --- DEBUG RENDERER (V2 SAFE) ---
+    // --- DEBUG RENDERER ---
     private fun getIntColor(c: Int): Int {
         val r = (c and 0x1F) shl 3
         val g = ((c shr 5) and 0x1F) shl 3
@@ -702,6 +726,33 @@ enum class ObjectSize {
     }
 
     private fun renderScanline(y: Int) {
+        if (y < 0 || y >= 224) return
+        try {
+            val bgColor = getIntColor(cgram.colors[0].value)
+            for (x in 0 until 256) {
+                val index = y * 256 + x
+                if (index < videoBuffer.size) {
+                    val vramIndex = index % vram.vram.size
+                    val pixelData = vram.vram[vramIndex].toInt()
+                    if (pixelData != 0) {
+                        videoBuffer[index] = bgColor or 0x00505050
+                    } else {
+                        videoBuffer[index] = bgColor
+                    }
+                }
+            }
+        } catch (e: Exception) {}
+    }
+    companion object {
+        fun byCode(code: Int) = values()[code]
+    }
+
+        val r = (c and 0x1F) shl 3
+        val g = ((c shr 5) and 0x1F) shl 3
+        val b = ((c shr 10) and 0x1F) shl 3
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
         if (y < 0 || y >= 224) return
         val bgColor = getIntColor(cgram.colors[0].value)
         for (x in 0 until 256) {
