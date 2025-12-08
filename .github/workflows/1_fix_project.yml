@@ -1,4 +1,4 @@
-name: Fix Compilation Error (Reserved Names)
+name: Fix Runtime Crash & Warnings
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 jobs:
-  fix-reserved-names:
+  fix-runtime:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,37 +22,70 @@ jobs:
           git config --global user.email "actions@github.com"
 
       # ------------------------------------------------------------------
-      # REVERTER NOMES DE VARIÁVEIS (_ -> nome original)
+      # 1. CORRIGIR O CRASH (IllegalStateException: invalid Read-Access)
       # ------------------------------------------------------------------
-      - name: Revert Variable Names
+      - name: Enable Invalid Access (Open Bus)
         run: |
-          echo "Corrigindo erro de nomes reservados..."
+          echo ">>> Corrigindo MemoryImpl.kt para permitir leituras inválidas (Open Bus)..."
           
-          # 1. HardwareMapping.kt: Reverter "_: Bank" para "bank: Bank"
-          HW_FILE="app/src/main/java/de/dde/snes/memory/HardwareMapping.kt"
-          if [ -f "$HW_FILE" ]; then
-             # O comando anterior quebrou o código ao mudar para _. Voltamos para 'bank'.
-             sed -i 's/_: Bank/bank: Bank/g' "$HW_FILE"
-             echo "HardwareMapping.kt corrigido."
-          fi
-
-          # 2. PPU.kt: Reverter "_: Long" para "cycles: Long"
-          PPU_FILE="app/src/main/java/de/dde/snes/ppu/PPU.kt"
-          if [ -f "$PPU_FILE" ]; then
-             # Voltamos para 'cycles'
-             sed -i 's/_: Long/cycles: Long/g' "$PPU_FILE"
-             echo "PPU.kt corrigido."
+          FILE="app/src/main/java/de/dde/snes/memory/MemoryImpl.kt"
+          
+          if [ -f "$FILE" ]; then
+             # O erro ocorre porque o HardwareMapping é instanciado com 'false' (não permitir acesso inválido).
+             # Mudamos para 'true' para simular o hardware real (retornar último valor do barramento em vez de crashar).
+             
+             # Procura: val hardwareMapping = HardwareMapping(snes, false)
+             # Substitui por: val hardwareMapping = HardwareMapping(snes, true)
+             sed -i 's/HardwareMapping(snes, false)/HardwareMapping(snes, true)/g' "$FILE"
+             
+             echo "Correção aplicada em MemoryImpl.kt"
+          else
+             echo "ERRO: Arquivo MemoryImpl.kt não encontrado!"
+             exit 1
           fi
 
       # ------------------------------------------------------------------
-      # COMMIT E PUSH
+      # 2. LIMPAR OS WARNINGS (Parameter 'bank' is never used)
       # ------------------------------------------------------------------
-      - name: Commit Fix
+      - name: Suppress Kotlin Warnings
+        run: |
+          echo ">>> Adicionando supressão de avisos nos arquivos..."
+
+          # Função para adicionar @Suppress no topo do arquivo se não existir
+          add_suppress() {
+              local file=$1
+              if [ -f "$file" ]; then
+                  # Verifica se já tem a supressão
+                  if ! grep -q "@file:Suppress" "$file"; then
+                      # Lê o conteúdo
+                      local content=$(cat "$file")
+                      # Reescreve com a supressão no topo
+                      echo "@file:Suppress(\"UNUSED_PARAMETER\")" > "$file"
+                      echo "" >> "$file"
+                      echo "$content" >> "$file"
+                      echo "Warnings suprimidos em $(basename $file)"
+                  fi
+              fi
+          }
+
+          # Aplica em HardwareMapping.kt (Onde tem vários avisos de 'bank')
+          add_suppress "app/src/main/java/de/dde/snes/memory/HardwareMapping.kt"
+
+          # Aplica em PPU.kt (Aviso de 'cycles')
+          add_suppress "app/src/main/java/de/dde/snes/ppu/PPU.kt"
+          
+          # Aplica em Processor2.kt (Vários avisos de 'value')
+          add_suppress "app/src/main/java/de/dde/snes/processor/Processor2.kt"
+
+      # ------------------------------------------------------------------
+      # 3. COMMIT E PUSH
+      # ------------------------------------------------------------------
+      - name: Commit Fixes
         run: |
           git add .
           if git diff-index --quiet HEAD --; then
-             echo "Nenhuma correção necessária (arquivos já estavam certos)."
+             echo "Nenhuma mudança necessária."
           else
-             git commit -m "Fix: Revert reserved parameter names to fix compilation"
+             git commit -m "Fix: Enable HardwareMapping loose access to prevent crash & suppress warnings"
              git push
           fi
