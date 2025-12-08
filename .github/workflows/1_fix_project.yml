@@ -1,13 +1,13 @@
-name: Fix Warnings & Add Load ROM Button
+name: Refactor Cartridge & Connect Core
 
 on:
-  workflow_dispatch: # Rode manualmente na aba Actions
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  update-code:
+  refactor-and-connect:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,50 +22,42 @@ jobs:
           git config --global user.email "actions@github.com"
 
       # ------------------------------------------------------------------
-      # PARTE 1: CORREÇÃO DE AVISOS (WARNINGS)
+      # 1. REFATORAR CARTRIDGE.KT (Path -> ByteArray)
       # ------------------------------------------------------------------
-      - name: Fix Kotlin Warnings
+      - name: Refactor Cartridge Class
         run: |
-          echo ">>> Corrigindo .toChar() deprecated..."
-          # Substitui .toChar() por .toInt().toChar()
-          CART_FILE="app/src/main/java/de/dde/snes/cartridge/Cartridge.kt"
-          if [ -f "$CART_FILE" ]; then
-            sed -i 's/\.toChar()/.toInt().toChar()/g' "$CART_FILE"
-          fi
-
-          echo ">>> Renomeando parâmetros não usados para _ ..."
-          # Renomeia bank -> _
-          HW_FILE="app/src/main/java/de/dde/snes/memory/HardwareMapping.kt"
-          if [ -f "$HW_FILE" ]; then
-             sed -i 's/bank: Bank/_: Bank/g' "$HW_FILE"
-          fi
-
-          # Renomeia cycles -> _
-          PPU_FILE="app/src/main/java/de/dde/snes/ppu/PPU.kt"
-          if [ -f "$PPU_FILE" ]; then
-             sed -i 's/cycles: Long/_: Long/g' "$PPU_FILE"
-             # Comenta variáveis não usadas
-             sed -i 's/val intensity/\/\/ val intensity/g' "$PPU_FILE"
-             sed -i 's/val colorPlanes/\/\/ val colorPlanes/g' "$PPU_FILE"
-          fi
-
-          echo ">>> Suprimindo avisos no arquivo de rascunho..."
-          PROC_FILE="app/src/main/java/de/dde/snes/processor/Processor2.kt"
-          if [ -f "$PROC_FILE" ]; then
-            CONTENT=$(cat "$PROC_FILE")
-            echo "@file:Suppress(\"UNUSED_PARAMETER\")" > "$PROC_FILE"
-            echo "" >> "$PROC_FILE"
-            echo "$CONTENT" >> "$PROC_FILE"
-          fi
-
-      # ------------------------------------------------------------------
-      # PARTE 2: IMPLEMENTAR BOTÃO LOAD ROM NA MAIN ACTIVITY
-      # ------------------------------------------------------------------
-      - name: Add Load ROM Button to MainActivity
-        run: |
-          echo ">>> Reescrevendo MainActivity.kt com botão Load ROM..."
+          FILE="app/src/main/java/de/dde/snes/cartridge/Cartridge.kt"
           
-          mkdir -p app/src/main/java/de/dde/snes
+          if [ -f "$FILE" ]; then
+            echo ">>> Modificando Cartridge.kt para aceitar memória RAM em vez de Path..."
+
+            # 1. Remover imports de java.nio (Incompatíveis/Desnecessários agora)
+            sed -i '/import java.nio.file/d' "$FILE"
+
+            # 2. Alterar o construtor: de (val path: Path) para (val inputBytes: ByteArray)
+            # O 'val' mantem a variável acessível, mas agora são os dados brutos
+            sed -i 's/val path: Path/val inputBytes: ByteArray/g' "$FILE"
+
+            # 3. Remover a linha que tenta ler do disco (Files.readAllBytes)
+            # E substituir pela atribuição direta dos bytes recebidos
+            sed -i 's/var b = Files.readAllBytes(path)/var b = inputBytes/g' "$FILE"
+
+            # 4. Corrigir referências a "$path" usadas em mensagens de erro (String templates)
+            # Como não temos mais "path", substituímos por um texto genérico
+            sed -i 's/\$path/loaded rom/g' "$FILE"
+            
+            echo "Cartridge.kt refatorado com sucesso."
+          else
+            echo "ERRO: Cartridge.kt não encontrado."
+            exit 1
+          fi
+
+      # ------------------------------------------------------------------
+      # 2. ATUALIZAR MAIN ACTIVITY (CONECTAR TUDO)
+      # ------------------------------------------------------------------
+      - name: Update MainActivity with Emulator Logic
+        run: |
+          echo ">>> Atualizando MainActivity para injetar o Cartucho no SNES..."
           
           cat <<EOF > app/src/main/java/de/dde/snes/MainActivity.kt
           package de.dde.snes
@@ -80,44 +72,43 @@ jobs:
           import androidx.activity.result.contract.ActivityResultContracts
           import androidx.appcompat.app.AppCompatActivity
           import java.io.InputStream
+          
+          // Imports do Core do Emulador
+          import de.dde.snes.cartridge.Cartridge
+          import de.dde.snes.SNES
 
           class MainActivity : AppCompatActivity() {
 
               private lateinit var statusText: TextView
+              
+              // Instância do emulador
+              private val snes = SNES()
 
-              // Configura o contrato moderno para abrir arquivos (Scoped Storage)
               private val loadRomLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
                   if (uri != null) {
-                      loadRom(uri)
-                  } else {
-                      Toast.makeText(this, "Nenhum arquivo selecionado", Toast.LENGTH_SHORT).show()
+                      loadAndStartRom(uri)
                   }
               }
 
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
 
-                  // Layout Simples criado via código (sem XML)
                   val layout = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       gravity = Gravity.CENTER
                       setPadding(50, 50, 50, 50)
                   }
 
-                  // Botão Load ROM
                   val btnLoad = Button(this).apply {
-                      text = "LOAD ROM (SMC/SFC)"
+                      text = "LOAD ROM & START"
                       textSize = 18f
                       setOnClickListener {
-                          // Abre o seletor de arquivos
-                          // Filtra por qualquer tipo para garantir que mostre as ROMs
                           loadRomLauncher.launch(arrayOf("*/*"))
                       }
                   }
 
-                  // Texto de Status
                   statusText = TextView(this).apply {
-                      text = "SNES Core Initialized.\nSelect a ROM to load into memory."
+                      text = "SNES Android Core Ready.\nWaiting for ROM..."
                       textSize = 16f
                       gravity = Gravity.CENTER
                       setPadding(0, 50, 0, 0)
@@ -128,32 +119,47 @@ jobs:
                   setContentView(layout)
               }
 
-              private fun loadRom(uri: Uri) {
+              private fun loadAndStartRom(uri: Uri) {
                   try {
                       val contentResolver = applicationContext.contentResolver
-                      
-                      // Abre o arquivo usando Stream (Android não usa Paths de disco diretamente)
                       val inputStream: InputStream? = contentResolver.openInputStream(uri)
                       
                       if (inputStream != null) {
-                          // Lê os bytes para a memória (Simulando o carregamento do cartucho)
-                          val bytes = inputStream.readBytes()
+                          // 1. Ler bytes
+                          val romBytes = inputStream.readBytes()
                           inputStream.close()
 
-                          statusText.text = "SUCESSO!\nArquivo: \$uri\nTamanho: \${bytes.size} bytes carregados na RAM.\n\n(Pronto para passar ao Emulator Core)"
+                          statusText.text = "ROM Carregada: \${romBytes.size} bytes.\nInicializando Cartucho..."
                           
-                          Toast.makeText(this, "ROM Carregada!", Toast.LENGTH_LONG).show()
+                          // 2. Criar Cartucho (Agora aceita ByteArray graças ao script!)
+                          val cartridge = Cartridge(romBytes)
                           
-                          // TODO: Aqui você chamará o Core do emulador:
-                          // val cartridge = Cartridge(bytes) 
-                          // snes.insertCartridge(cartridge)
-                          // snes.start()
+                          // 3. Resetar e Inserir no Console
+                          snes.reset()
+                          snes.insertCartridge(cartridge)
+                          
+                          statusText.text = "Cartucho inserido!\nHeader: \${cartridge.header.name}\nIniciando CPU..."
+                          
+                          // 4. Iniciar Emulação (Em Thread separada para não travar UI)
+                          Thread {
+                              try {
+                                  // snes.reset() já foi chamado
+                                  snes.start() 
+                              } catch (e: Exception) {
+                                  runOnUiThread {
+                                      statusText.text = "Crash no Emulador:\n\${e.message}"
+                                  }
+                                  e.printStackTrace()
+                              }
+                          }.start()
+                          
+                          Toast.makeText(this, "Emulação Iniciada!", Toast.LENGTH_SHORT).show()
                           
                       } else {
-                          statusText.text = "Erro: Não foi possível abrir o stream do arquivo."
+                          statusText.text = "Erro: Stream nulo."
                       }
                   } catch (e: Exception) {
-                      statusText.text = "Erro ao ler ROM:\n\${e.message}"
+                      statusText.text = "Erro Fatal:\n\${e.message}"
                       e.printStackTrace()
                   }
               }
@@ -161,14 +167,14 @@ jobs:
           EOF
 
       # ------------------------------------------------------------------
-      # COMMIT E PUSH
+      # 3. COMMIT E PUSH
       # ------------------------------------------------------------------
-      - name: Commit Changes
+      - name: Commit Refactoring
         run: |
           git add .
           if git diff-index --quiet HEAD --; then
-             echo "Nenhuma mudança para comitar."
+             echo "Nada para comitar."
           else
-             git commit -m "Refactor: Fix warnings & Add Load ROM Button UI"
+             git commit -m "Refactor: Cartridge uses ByteArray & MainActivity connects to SNES core"
              git push
           fi
