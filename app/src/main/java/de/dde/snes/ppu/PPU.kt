@@ -135,6 +135,7 @@ class PPU(
             }
 
             if (hoffset == FIRST_H_OFFSET + snes.version.width) {
+                renderScanline(voffset)
                 inHBlank = true
                 snes.dma.forEach { it.doHdmaForScanline(voffset) }
             }
@@ -690,5 +691,28 @@ enum class ObjectSize {
 
     companion object {
         fun byCode(code: Int) = values()[code]
+    }
+
+    // --- DEBUG RENDERER (V2 SAFE) ---
+    private fun getIntColor(c: Int): Int {
+        val r = (c and 0x1F) shl 3
+        val g = ((c shr 5) and 0x1F) shl 3
+        val b = ((c shr 10) and 0x1F) shl 3
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    private fun renderScanline(y: Int) {
+        if (y < 0 || y >= 224) return
+        val bgColor = getIntColor(cgram.colors[0].value)
+        for (x in 0 until 256) {
+            val index = y * 256 + x
+            val vramIndex = index % vram.vram.size
+            val pixelData = vram.vram[vramIndex].toInt()
+            if (pixelData != 0) {
+                videoBuffer[index] = bgColor or 0x00505050
+            } else {
+                videoBuffer[index] = bgColor
+            }
+        }
     }
 }
