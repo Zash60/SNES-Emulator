@@ -75,12 +75,12 @@ class Cartridge(
         buffer.order(ByteOrder.LITTLE_ENDIAN)
 
         val maker = buffer.short
-        val game = (0..3).map { buffer.get().toChar() }.joinToString("")
+        val game = (0..3).map { buffer.get().toInt().toChar() }.joinToString("")
         val fixed = (0..6).map { (buffer.get().toLong() and 0xFF) shl (8 * (6 - it)) }.sum()
         val exRamSize = buffer.get()
         val specVersion = buffer.get()
         val cTypeSub = buffer.get()
-        val name = (0 until NAME_SIZE).map { buffer.get().toChar() }.joinToString("").trimEnd()
+        val name = (0 until NAME_SIZE).map { buffer.get().toInt().toChar() }.joinToString("").trimEnd()
         val mapMode = buffer.get()
         val cType = buffer.get()
         val romSize = buffer.get()

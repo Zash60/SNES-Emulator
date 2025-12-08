@@ -1,3 +1,5 @@
+@file:Suppress("UNUSED_PARAMETER")
+
 package de.dde.snes.processor
 
 // alles was auf dem Accumulator läuft (ASL, EOR, AND, etc.) muss je nach A 1 oder 2 Byte holen/geben

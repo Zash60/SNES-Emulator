@@ -119,7 +119,7 @@ class PPU(
 
     // TODO
     var delta = 0L
-    fun updateCycles(cycles: Long, delta: Long) {
+    fun updateCycles(_: Long, delta: Long) {
         this.delta += delta
 
         while(this.delta >= CYCLES_PER_TICK) {
@@ -543,8 +543,8 @@ class PPU(
                 //backgrounds[5].enableColorMath = value.isBitSet(0x20)
             }
             0x2132 -> {
-                val intensity = value and 0x1F
-                val colorPlanes = value and 0xE0 shl 5
+                // val intensity = value and 0x1F
+                // val colorPlanes = value and 0xE0 shl 5
                 // TODO ???
             }
             0x2133 -> {

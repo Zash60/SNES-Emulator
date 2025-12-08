@@ -6,7 +6,7 @@ class HardwareMapping(
     private val snes: SNES,
     private val allowInvalidAccess: Boolean = true
 ) : MemoryMapping {
-    override fun readByte(bank: Bank, address: ShortAddress): Int {
+    override fun readByte(_: Bank, address: ShortAddress): Int {
         return when (address) {
             in 0x2100..0x213F -> snes.ppu.readByte(bank, address)
             in 0x2140..0x2143 -> snes.apu.readByte(bank, address)
@@ -30,7 +30,7 @@ class HardwareMapping(
         }
     }
 
-    override fun writeByte(bank: Bank, address: ShortAddress, value: Int) {
+    override fun writeByte(_: Bank, address: ShortAddress, value: Int) {
         when (address) {
             in 0x2100..0x213F -> snes.ppu.writeByte(bank, address, value)
             in 0x2140..0x2143 -> snes.apu.writeByte(bank, address, value)
@@ -53,7 +53,7 @@ class HardwareMapping(
         }
     }
 
-    private fun readByteCpu(bank: Bank, address: ShortAddress): Int {
+    private fun readByteCpu(_: Bank, address: ShortAddress): Int {
         with (snes.processor) {
             return when (address) {
                 0x2180 -> {
@@ -132,7 +132,7 @@ class HardwareMapping(
         }
     }
 
-    private fun writeByteCpu(bank: Bank, address: ShortAddress, value: Int) {
+    private fun writeByteCpu(_: Bank, address: ShortAddress, value: Int) {
         with (snes.processor) {
             when (address) {
                 0x2180 -> {
@@ -213,7 +213,7 @@ class HardwareMapping(
         }
     }
 
-    private fun readByteProcessor(bank: Bank, address: ShortAddress): Int {
+    private fun readByteProcessor(_: Bank, address: ShortAddress): Int {
         return when (address) {
             0x4210 -> {
                 val chipVersion = snes.processor.chipVersion
@@ -230,7 +230,7 @@ class HardwareMapping(
         }
     }
 
-    fun writeByteProcessor(bank: Bank, address: ShortAddress, value: Int) {
+    fun writeByteProcessor(_: Bank, address: ShortAddress, value: Int) {
         when (address) {
             0x4210, 0x4211 -> {
             }
@@ -238,7 +238,7 @@ class HardwareMapping(
         }
     }
 
-    private fun readByteDma(bank: Bank, address: ShortAddress): Int {
+    private fun readByteDma(_: Bank, address: ShortAddress): Int {
         val channel = (address and 0x00F0) shr 8
 
         with(snes.dma[channel]) {
@@ -292,7 +292,7 @@ class HardwareMapping(
         }
     }
 
-    private fun writeByteDma(bank: Bank, address: ShortAddress, value: Int) {
+    private fun writeByteDma(_: Bank, address: ShortAddress, value: Int) {
         val channel = (address and 0x00F0) shr 8
 
         with(snes.dma[channel]) {
