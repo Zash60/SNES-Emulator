@@ -37,15 +37,14 @@ class MainActivity : AppCompatActivity() {
         layoutContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(0xFF000000.toInt()) // Fundo Preto
+            setBackgroundColor(0xFF202020.toInt()) // Cinza escuro para diferenciar do preto do jogo
         }
 
-        // Tela do Emulador (Inicialmente invisível ou placeholder)
         emulatorView = EmulatorView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0, 
-                1f // Peso 1 para ocupar o espaço
+                1f
             )
         }
 
@@ -58,7 +57,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         statusText = TextView(this).apply {
-            text = "SNES Kotlin Droid"
+            text = "SNES Core Ready"
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 14f
             gravity = Gravity.CENTER
@@ -74,75 +73,81 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadAndStartRom(uri: Uri) {
         try {
-            // Parar emulação anterior se houver
             isEmulationRunning = false
             Thread.sleep(100) 
 
+            val contentResolver = applicationContext.contentResolver
             val inputStream: InputStream? = contentResolver.openInputStream(uri)
             
             if (inputStream != null) {
                 val romBytes = inputStream.readBytes()
                 inputStream.close()
 
+                // Cria o cartucho e reseta o console
                 val cartridge = Cartridge(romBytes)
-                
                 snes.reset()
                 snes.insertCartridge(cartridge)
+                // Reset novamente após inserir o cartucho para garantir vetores corretos
+                snes.reset()
                 
                 statusText.text = "Rodando: ${cartridge.header.name}"
-                btnLoad.visibility = View.GONE // Esconde botão para imersão
+                btnLoad.visibility = View.GONE
                 
                 isEmulationRunning = true
                 startEmulationLoop()
-                
             }
         } catch (e: Exception) {
             statusText.text = "Erro: ${e.message}"
+            e.printStackTrace()
         }
     }
 
     private fun startEmulationLoop() {
         Thread {
             try {
-                // Loop infinito do emulador
                 while (isEmulationRunning) {
-                    // Executa instruções até completar um frame (V-Blank)
-                    // Nota: O método snes.start() original tem um while(true). 
-                    // Precisamos de um método que execute apenas UM passo ou quadro.
-                    // Como não podemos mudar o SNES.kt facilmente aqui sem risco, 
-                    // vamos simular chamando o processador manualmente se necessário
-                    // ou assumir que modificamos o SNES.kt para expor um método 'stepFrame'
+                    // --- LOOP DO QUADRO (FRAME) ---
+                    // Executa o processador loucamente até completar 1 quadro de vídeo
                     
-                    // HACK: Chamamos step() repetidamente até o frame ficar pronto
-                    // Isso substitui o snes.start() que era bloqueante
+                    snes.ppu.frameReady = false
                     
-                    snes.processor.executeNextInstruction()
-                    // Ciclos aproximados (cálculo simplificado para sincronia básica)
-                    val cycles = snes.processor.cycles
-                    snes.ppu.updateCycles(cycles, 4) // Delta fixo simulado
-                    
-                    // Se o PPU sinalizou frame pronto
-                    if (snes.ppu.frameReady) {
-                        snes.ppu.frameReady = false
+                    while (!snes.ppu.frameReady && isEmulationRunning) {
+                        // 1. Guarda ciclos atuais
+                        val cyclesBefore = snes.processor.cycles
                         
-                        // Pegamos os pixels
-                        // ATENÇÃO: Se o emulador ainda não gera pixels reais, 
-                        // isso desenhará preto, mas a lógica está pronta.
+                        // 2. Executa UMA instrução do SNES
+                        snes.processor.executeNextInstruction()
+                        
+                        // 3. Calcula quantos ciclos passaram
+                        val cyclesDelta = snes.processor.cycles - cyclesBefore
+                        
+                        // 4. Atualiza o PPU (Placa de vídeo) com esse tempo
+                        // O PPU vai desenhar a linha (scanline) quando tiver ciclos suficientes
+                        snes.ppu.updateCycles(snes.processor.cycles, cyclesDelta)
+                    }
+
+                    // --- FIM DO QUADRO ---
+                    // Se chegamos aqui, o PPU terminou de desenhar a tela (V-Blank)
+                    
+                    if (isEmulationRunning) {
+                        // Copia o buffer de vídeo para a UI
                         val pixels = snes.ppu.videoBuffer
                         
-                        // Atualiza a UI
+                        // runOnUiThread é pesado se chamado muitas vezes, 
+                        // mas 60 vezes por segundo é aceitável.
                         runOnUiThread {
                             emulatorView.updateFrame(pixels)
                         }
                         
-                        // Pequeno delay para não rodar a 1000 FPS (Speed limit simples)
-                        Thread.sleep(16) 
+                        // Limitador de velocidade simples (60 FPS)
+                        // O ideal seria contar o tempo real, mas sleep(16) resolve por agora.
+                        Thread.sleep(16)
                     }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 runOnUiThread {
-                    statusText.text = "Crash: ${e.message}"
+                    statusText.text = "Crash na CPU: ${e.message}"
                     btnLoad.visibility = View.VISIBLE
                 }
             }
