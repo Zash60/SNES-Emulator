@@ -1,4 +1,4 @@
-name: Add Video Output (Screen)
+name: Fix PPU Syntax Error
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 jobs:
-  implement-video:
+  fix-ppu:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,254 +22,40 @@ jobs:
           git config --global user.email "actions@github.com"
 
       # ------------------------------------------------------------------
-      # 1. ATUALIZAR PPU.KT (ADICIONAR BUFFER DE VÍDEO)
+      # CORRIGIR O ARQUIVO PPU.KT
       # ------------------------------------------------------------------
-      - name: Add Video Buffer to PPU
+      - name: Repair PPU.kt Structure
         run: |
           FILE="app/src/main/java/de/dde/snes/ppu/PPU.kt"
           
           if [ -f "$FILE" ]; then
-             echo ">>> Adicionando buffer de pixels ao PPU..."
+             echo ">>> Reparando PPU.kt..."
              
-             # Adiciona variáveis de vídeo logo no início da classe
-             # frameReady: avisa a MainActivity que pode desenhar
-             # videoBuffer: array de inteiros representando as cores (ARGB) dos 256x224 pixels
-             sed -i '/class PPU/a \    var frameReady = false\n    val videoBuffer = IntArray(256 * 240) // Resolução máxima SNES' "$FILE"
+             # 1. Remover as linhas inseridas no lugar errado (dentro do construtor)
+             # Isso limpa a sujeira do script anterior
+             sed -i '/var frameReady = false/d' "$FILE"
+             sed -i '/val videoBuffer =/d' "$FILE"
              
-             # Modifica a lógica de VBlank para sinalizar que o quadro terminou
-             # Procura onde ele seta inVBlank = true e adiciona frameReady = true
-             sed -i '/inVBlank = true/a \                    frameReady = true' "$FILE"
+             # 2. Inserir as variáveis no lugar CORRETO (Dentro do corpo da classe)
+             # Usamos 'val oam = OAM()' como âncora, pois sabemos que esta linha está dentro das chaves { }
+             # O comando 'i' insere ANTES dessa linha
+             sed -i '/val oam = OAM()/i \    var frameReady = false\n    val videoBuffer = IntArray(256 * 240) \/\/ Buffer de Video' "$FILE"
              
-             echo "PPU atualizado com saída de vídeo."
+             echo "PPU.kt corrigido com sucesso."
+          else
+             echo "ERRO: PPU.kt não encontrado."
+             exit 1
           fi
 
       # ------------------------------------------------------------------
-      # 2. CRIAR EMULATOR VIEW (A TELA DO JOGO)
+      # COMMIT E PUSH
       # ------------------------------------------------------------------
-      - name: Create EmulatorView.kt
-        run: |
-          echo ">>> Criando componente de tela otimizado..."
-          
-          cat <<EOF > app/src/main/java/de/dde/snes/EmulatorView.kt
-          package de.dde.snes
-
-          import android.content.Context
-          import android.graphics.Bitmap
-          import android.graphics.Canvas
-          import android.graphics.Color
-          import android.graphics.Paint
-          import android.graphics.Rect
-          import android.util.AttributeSet
-          import android.view.View
-
-          class EmulatorView @JvmOverloads constructor(
-              context: Context, attrs: AttributeSet? = null
-          ) : View(context, attrs) {
-
-              // Resolução nativa do SNES
-              private val WIDTH = 256
-              private val HEIGHT = 224
-              
-              // O Bitmap onde desenharemos os pixels do emulador
-              private val bitmap = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
-              private val srcRect = Rect(0, 0, WIDTH, HEIGHT)
-              private val dstRect = Rect()
-              private val paint = Paint()
-
-              // Recebe os pixels brutos do PPU e atualiza a tela
-              fun updateFrame(pixels: IntArray) {
-                  // Copia os pixels do emulador para o Bitmap do Android
-                  // Nota: Estamos assumindo que o array tem pelo menos 256*224
-                  try {
-                      bitmap.setPixels(pixels, 0, WIDTH, 0, 0, WIDTH, HEIGHT)
-                      invalidate() // Força o Android a redesenhar esta View (chama onDraw)
-                  } catch (e: Exception) {
-                      e.printStackTrace()
-                  }
-              }
-
-              override fun onDraw(canvas: Canvas) {
-                  super.onDraw(canvas)
-                  
-                  // Calcula a escala para preencher a tela mantendo proporção (ou esticando)
-                  dstRect.set(0, 0, width, height)
-                  
-                  // Desenha o bitmap do jogo na tela do celular
-                  canvas.drawBitmap(bitmap, srcRect, dstRect, paint)
-              }
-          }
-          EOF
-
-      # ------------------------------------------------------------------
-      # 3. ATUALIZAR MAIN ACTIVITY (LOOP DE RENDERIZAÇÃO)
-      # ------------------------------------------------------------------
-      - name: Connect PPU to EmulatorView in MainActivity
-        run: |
-          echo ">>> Conectando a lógica do PPU à Interface..."
-          
-          cat <<EOF > app/src/main/java/de/dde/snes/MainActivity.kt
-          package de.dde.snes
-
-          import android.net.Uri
-          import android.os.Bundle
-          import android.widget.Button
-          import android.widget.LinearLayout
-          import android.widget.TextView
-          import android.widget.Toast
-          import android.view.Gravity
-          import android.view.View
-          import androidx.activity.result.contract.ActivityResultContracts
-          import androidx.appcompat.app.AppCompatActivity
-          import java.io.InputStream
-          
-          import de.dde.snes.cartridge.Cartridge
-          import de.dde.snes.SNES
-
-          class MainActivity : AppCompatActivity() {
-
-              private lateinit var statusText: TextView
-              private lateinit var emulatorView: EmulatorView
-              private lateinit var layoutContainer: LinearLayout
-              private lateinit var btnLoad: Button
-              
-              private val snes = SNES()
-              @Volatile private var isEmulationRunning = false
-
-              private val loadRomLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-                  if (uri != null) {
-                      loadAndStartRom(uri)
-                  }
-              }
-
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-
-                  layoutContainer = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      gravity = Gravity.CENTER
-                      setBackgroundColor(0xFF000000.toInt()) // Fundo Preto
-                  }
-
-                  // Tela do Emulador (Inicialmente invisível ou placeholder)
-                  emulatorView = EmulatorView(this).apply {
-                      layoutParams = LinearLayout.LayoutParams(
-                          LinearLayout.LayoutParams.MATCH_PARENT,
-                          0, 
-                          1f // Peso 1 para ocupar o espaço
-                      )
-                  }
-
-                  btnLoad = Button(this).apply {
-                      text = "CARREGAR JOGO"
-                      textSize = 20f
-                      setOnClickListener {
-                          loadRomLauncher.launch(arrayOf("*/*"))
-                      }
-                  }
-
-                  statusText = TextView(this).apply {
-                      text = "SNES Kotlin Droid"
-                      setTextColor(0xFFFFFFFF.toInt())
-                      textSize = 14f
-                      gravity = Gravity.CENTER
-                      setPadding(20, 20, 20, 20)
-                  }
-
-                  layoutContainer.addView(emulatorView)
-                  layoutContainer.addView(statusText)
-                  layoutContainer.addView(btnLoad)
-                  
-                  setContentView(layoutContainer)
-              }
-
-              private fun loadAndStartRom(uri: Uri) {
-                  try {
-                      // Parar emulação anterior se houver
-                      isEmulationRunning = false
-                      Thread.sleep(100) 
-
-                      val inputStream: InputStream? = contentResolver.openInputStream(uri)
-                      
-                      if (inputStream != null) {
-                          val romBytes = inputStream.readBytes()
-                          inputStream.close()
-
-                          val cartridge = Cartridge(romBytes)
-                          
-                          snes.reset()
-                          snes.insertCartridge(cartridge)
-                          
-                          statusText.text = "Rodando: \${cartridge.header.name}"
-                          btnLoad.visibility = View.GONE // Esconde botão para imersão
-                          
-                          isEmulationRunning = true
-                          startEmulationLoop()
-                          
-                      }
-                  } catch (e: Exception) {
-                      statusText.text = "Erro: \${e.message}"
-                  }
-              }
-
-              private fun startEmulationLoop() {
-                  Thread {
-                      try {
-                          // Loop infinito do emulador
-                          while (isEmulationRunning) {
-                              // Executa instruções até completar um frame (V-Blank)
-                              // Nota: O método snes.start() original tem um while(true). 
-                              // Precisamos de um método que execute apenas UM passo ou quadro.
-                              // Como não podemos mudar o SNES.kt facilmente aqui sem risco, 
-                              // vamos simular chamando o processador manualmente se necessário
-                              // ou assumir que modificamos o SNES.kt para expor um método 'stepFrame'
-                              
-                              // HACK: Chamamos step() repetidamente até o frame ficar pronto
-                              // Isso substitui o snes.start() que era bloqueante
-                              
-                              snes.processor.executeNextInstruction()
-                              // Ciclos aproximados (cálculo simplificado para sincronia básica)
-                              val cycles = snes.processor.cycles
-                              snes.ppu.updateCycles(cycles, 4) // Delta fixo simulado
-                              
-                              // Se o PPU sinalizou frame pronto
-                              if (snes.ppu.frameReady) {
-                                  snes.ppu.frameReady = false
-                                  
-                                  // Pegamos os pixels
-                                  // ATENÇÃO: Se o emulador ainda não gera pixels reais, 
-                                  // isso desenhará preto, mas a lógica está pronta.
-                                  val pixels = snes.ppu.videoBuffer
-                                  
-                                  // Atualiza a UI
-                                  runOnUiThread {
-                                      emulatorView.updateFrame(pixels)
-                                  }
-                                  
-                                  // Pequeno delay para não rodar a 1000 FPS (Speed limit simples)
-                                  Thread.sleep(16) 
-                              }
-                          }
-                      } catch (e: Exception) {
-                          e.printStackTrace()
-                          runOnUiThread {
-                              statusText.text = "Crash: \${e.message}"
-                              btnLoad.visibility = View.VISIBLE
-                          }
-                      }
-                  }.start()
-              }
-          }
-          EOF
-
-      # ------------------------------------------------------------------
-      # 4. COMMIT E PUSH
-      # ------------------------------------------------------------------
-      - name: Commit Video Features
+      - name: Commit Fix
         run: |
           git add .
           if git diff-index --quiet HEAD --; then
-             echo "Nada para comitar."
+             echo "Nenhuma mudança necessária."
           else
-             git commit -m "Feat: Add EmulatorView and Video Buffer Logic"
+             git commit -m "Fix: Move PPU properties out of constructor"
              git push
           fi
