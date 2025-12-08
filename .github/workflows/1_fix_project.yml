@@ -1,4 +1,4 @@
-name: Fix PPU Syntax Error
+name: Implement Debug Renderer (Safe Mode)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 jobs:
-  fix-ppu:
+  inject-renderer:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,40 +22,69 @@ jobs:
           git config --global user.email "actions@github.com"
 
       # ------------------------------------------------------------------
-      # CORRIGIR O ARQUIVO PPU.KT
+      # INJETAR LÓGICA DE RENDERIZAÇÃO NO PPU.KT (MÉTODO SEGURO)
       # ------------------------------------------------------------------
-      - name: Repair PPU.kt Structure
+      - name: Inject Render Logic
         run: |
           FILE="app/src/main/java/de/dde/snes/ppu/PPU.kt"
           
           if [ -f "$FILE" ]; then
-             echo ">>> Reparando PPU.kt..."
+             echo ">>> Injetando renderizador de debug no PPU..."
+
+             # 1. Injetar a chamada de renderização dentro de updateCycles
+             # Insere a chamada logo após o início do H-Blank
+             sed -i '/if (hoffset == FIRST_H_OFFSET + snes.version.width) {/a \                renderScanline(voffset)' "$FILE"
+
+             # 2. Preparar o arquivo para receber a nova função
+             # Removemos a última linha (a chave de fechamento '}') para anexar o código antes dela
+             head -n -1 "$FILE" > temp_ppu.kt
              
-             # 1. Remover as linhas inseridas no lugar errado (dentro do construtor)
-             # Isso limpa a sujeira do script anterior
-             sed -i '/var frameReady = false/d' "$FILE"
-             sed -i '/val videoBuffer =/d' "$FILE"
+             # 3. Escrever a função de renderização (Usando printf para evitar erro de YAML)
+             # Nota: Usamos \n para quebra de linha. Isso evita o erro de "dois pontos" do YAML.
              
-             # 2. Inserir as variáveis no lugar CORRETO (Dentro do corpo da classe)
-             # Usamos 'val oam = OAM()' como âncora, pois sabemos que esta linha está dentro das chaves { }
-             # O comando 'i' insere ANTES dessa linha
-             sed -i '/val oam = OAM()/i \    var frameReady = false\n    val videoBuffer = IntArray(256 * 240) \/\/ Buffer de Video' "$FILE"
+             printf "\n" >> temp_ppu.kt
+             printf "    // --- DEBUG RENDERER (V2 SAFE) ---\n" >> temp_ppu.kt
+             printf "    private fun getIntColor(c: Int): Int {\n" >> temp_ppu.kt
+             printf "        val r = (c and 0x1F) shl 3\n" >> temp_ppu.kt
+             printf "        val g = ((c shr 5) and 0x1F) shl 3\n" >> temp_ppu.kt
+             printf "        val b = ((c shr 10) and 0x1F) shl 3\n" >> temp_ppu.kt
+             printf "        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b\n" >> temp_ppu.kt
+             printf "    }\n\n" >> temp_ppu.kt
+
+             printf "    private fun renderScanline(y: Int) {\n" >> temp_ppu.kt
+             printf "        if (y < 0 || y >= 224) return\n" >> temp_ppu.kt
+             printf "        val bgColor = getIntColor(cgram.colors[0].value)\n" >> temp_ppu.kt
+             printf "        for (x in 0 until 256) {\n" >> temp_ppu.kt
+             printf "            val index = y * 256 + x\n" >> temp_ppu.kt
+             printf "            val vramIndex = index %% vram.vram.size\n" >> temp_ppu.kt
+             printf "            val pixelData = vram.vram[vramIndex].toInt()\n" >> temp_ppu.kt
+             printf "            if (pixelData != 0) {\n" >> temp_ppu.kt
+             printf "                videoBuffer[index] = bgColor or 0x00505050\n" >> temp_ppu.kt
+             printf "            } else {\n" >> temp_ppu.kt
+             printf "                videoBuffer[index] = bgColor\n" >> temp_ppu.kt
+             printf "            }\n" >> temp_ppu.kt
+             printf "        }\n" >> temp_ppu.kt
+             printf "    }\n" >> temp_ppu.kt
+             printf "}\n" >> temp_ppu.kt
+
+             # Substitui o arquivo original
+             mv temp_ppu.kt "$FILE"
              
-             echo "PPU.kt corrigido com sucesso."
+             echo "Lógica de renderização injetada com sucesso."
           else
-             echo "ERRO: PPU.kt não encontrado."
+             echo "ERRO: PPU.kt não encontrado"
              exit 1
           fi
 
       # ------------------------------------------------------------------
       # COMMIT E PUSH
       # ------------------------------------------------------------------
-      - name: Commit Fix
+      - name: Commit Renderer
         run: |
           git add .
           if git diff-index --quiet HEAD --; then
-             echo "Nenhuma mudança necessária."
+             echo "Nada mudou."
           else
-             git commit -m "Fix: Move PPU properties out of constructor"
+             git commit -m "Feat: Add Debug Renderer (Safe Injection)"
              git push
           fi
