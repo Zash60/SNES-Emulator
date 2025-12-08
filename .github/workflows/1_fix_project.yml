@@ -1,13 +1,13 @@
-name: Fix Android Structure & Gradle
+name: Fix AndroidX Error
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Rode manualmente
 
 permissions:
   contents: write
 
 jobs:
-  fix-project:
+  fix-properties:
     runs-on: ubuntu-latest
 
     steps:
@@ -16,205 +16,40 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
       - name: Configure Git
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
 
       # ------------------------------------------------------------------
-      # 1. LIMPEZA TOTAL DE CONFIGURAÇÕES ANTIGAS
+      # CRIA O ARQUIVO GRADLE.PROPERTIES FALTANTE
       # ------------------------------------------------------------------
-      - name: Nuke Old Configs
+      - name: Create gradle.properties
         run: |
-          echo "Removendo configurações antigas..."
-          rm -f build.gradle.kts build.gradle settings.gradle.kts settings.gradle
-          rm -rf app/build.gradle.kts gradle/wrapper gradlew gradlew.bat
+          echo "Criando gradle.properties com suporte a AndroidX..."
+          
+          cat <<EOF > gradle.properties
+          # Habilita o suporte às bibliotecas AndroidX (Corrige o erro checkDebugAarMetadata)
+          android.useAndroidX=true
+          
+          # Migra automaticamente bibliotecas antigas para AndroidX
+          android.enableJetifier=true
+          
+          # Configuração de memória para evitar travamentos no build
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          EOF
 
       # ------------------------------------------------------------------
-      # 2. GERAR WRAPPER 8.4 (Usando truque para Gradle 9)
+      # COMMIT E PUSH
       # ------------------------------------------------------------------
-      - name: Generate Gradle Wrapper 8.4
+      - name: Commit Fix
         run: |
-          # Cria um settings vazio apenas para o Gradle 9 não reclamar
-          echo "rootProject.name = 'TEMP'" > settings.gradle
+          git add gradle.properties
           
-          # Gera o wrapper 8.4
-          gradle wrapper --gradle-version 8.4 --distribution-type bin
-          
-          # IMPORTANTE: Apaga o settings temporário para não conflitar com o KTS
-          rm settings.gradle
-
-      # ------------------------------------------------------------------
-      # 3. RECRIAÇÃO DOS ARQUIVOS DE CONFIGURAÇÃO (CORRIGIDOS)
-      # ------------------------------------------------------------------
-      - name: Write Correct Configuration Files
-        run: |
-          # 1. settings.gradle.kts (Define onde baixar os plugins)
-          cat <<EOF > settings.gradle.kts
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.name = "SNES-Emulator"
-          include(":app")
-          EOF
-
-          # 2. build.gradle.kts (Raiz)
-          cat <<EOF > build.gradle.kts
-          plugins {
-              id("com.android.application") version "8.2.0" apply false
-              id("org.jetbrains.kotlin.android") version "1.9.20" apply false
-          }
-          EOF
-
-          # 3. Criar diretório app se não existir
-          mkdir -p app
-
-          # 4. app/build.gradle.kts
-          cat <<EOF > app/build.gradle.kts
-          plugins {
-              id("com.android.application")
-              id("org.jetbrains.kotlin.android")
-          }
-
-          android {
-              namespace = "de.dde.snes"
-              compileSdk = 34
-
-              defaultConfig {
-                  applicationId = "de.dde.snes"
-                  minSdk = 26
-                  targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0"
-                  testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-              }
-              buildTypes {
-                  release {
-                      isMinifyEnabled = false
-                      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-                  }
-              }
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_1_8
-                  targetCompatibility = JavaVersion.VERSION_1_8
-              }
-              kotlinOptions {
-                  jvmTarget = "1.8"
-              }
-              lint {
-                  abortOnError = false
-              }
-          }
-
-          dependencies {
-              implementation("androidx.core:core-ktx:1.12.0")
-              implementation("androidx.appcompat:appcompat:1.6.1")
-              implementation("com.google.android.material:material:1.11.0")
-              implementation(platform("org.jetbrains.kotlin:kotlin-bom:1.8.0"))
-          }
-          EOF
-
-      # ------------------------------------------------------------------
-      # 4. ORGANIZAÇÃO DE PASTAS E ARQUIVOS FALTANTES
-      # ------------------------------------------------------------------
-      - name: Organize Project Structure
-        run: |
-          mkdir -p app/src/main/java
-          
-          # Mover código se estiver na raiz antiga
-          if [ -d "src/main/kotlin" ]; then
-             cp -r src/main/kotlin/* app/src/main/java/
-             rm -rf src
-          fi
-          
-          # Remover arquivos que quebram o build (Testes e Swing)
-          find app/src/main/java -name "*Test.kt" -delete
-          find app/src/main/java -name "SNESTest.kt" -delete
-
-          # Criar Manifest se não existir
-          mkdir -p app/src/main
-          if [ ! -f "app/src/main/AndroidManifest.xml" ]; then
-            cat <<EOF > app/src/main/AndroidManifest.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <application
-                  android:allowBackup="true"
-                  android:icon="@mipmap/ic_launcher"
-                  android:label="SNES Kotlin"
-                  android:theme="@style/Theme.AppCompat.Light.NoActionBar">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
-          fi
-
-          # Criar MainActivity se não existir
-          mkdir -p app/src/main/java/de/dde/snes
-          if [ ! -f "app/src/main/java/de/dde/snes/MainActivity.kt" ]; then
-            cat <<EOF > app/src/main/java/de/dde/snes/MainActivity.kt
-          package de.dde.snes
-          import android.os.Bundle
-          import androidx.appcompat.app.AppCompatActivity
-          import android.widget.TextView
-          import android.view.Gravity
-          class MainActivity : AppCompatActivity() {
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-                  val tv = TextView(this)
-                  tv.text = "Emulator Ready"
-                  tv.gravity = Gravity.CENTER
-                  setContentView(tv)
-              }
-          }
-          EOF
-          fi
-
-          # Limpar IDE files
-          rm -rf .idea *.iml
-          
-          # Criar .gitignore
-          cat <<EOF > .gitignore
-          *.iml
-          .gradle
-          /local.properties
-          /.idea
-          /build
-          /app/build
-          EOF
-
-      # ------------------------------------------------------------------
-      # 5. COMMIT
-      # ------------------------------------------------------------------
-      - name: Commit Fixes
-        run: |
-          git add .
+          # Só comita se houver mudança
           if git diff-index --quiet HEAD --; then
-             echo "No changes to commit."
+             echo "gradle.properties já existe e está correto."
           else
-             git commit -m "Fix Android structure and plugin repositories"
+             git commit -m "Fix: Enable AndroidX in gradle.properties"
              git push
           fi
