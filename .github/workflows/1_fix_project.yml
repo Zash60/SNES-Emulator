@@ -1,4 +1,4 @@
-name: Implement Debug Renderer (Safe Mode)
+name: Fix PPU Renderer Context
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 jobs:
-  inject-renderer:
+  fix-ppu-renderer:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,69 +22,110 @@ jobs:
           git config --global user.email "actions@github.com"
 
       # ------------------------------------------------------------------
-      # INJETAR LÓGICA DE RENDERIZAÇÃO NO PPU.KT (MÉTODO SEGURO)
+      # 1. LIMPEZA (REMOVER CÓDIGO QUEBRADO)
       # ------------------------------------------------------------------
-      - name: Inject Render Logic
+      - name: Clean Bad Injection
         run: |
           FILE="app/src/main/java/de/dde/snes/ppu/PPU.kt"
           
           if [ -f "$FILE" ]; then
-             echo ">>> Injetando renderizador de debug no PPU..."
+             echo ">>> Limpando injeção anterior quebrada..."
+             
+             # Remove a chamada que estava dando erro "Unresolved reference"
+             sed -i '/renderScanline(voffset)/d' "$FILE"
+             
+             # Remove todo o bloco de código adicionado no final do arquivo na tentativa anterior
+             # O comando sed deleta da linha que contém o comentário até o final do arquivo ($d)
+             sed -i '/\/\/ --- DEBUG RENDERER/,$d' "$FILE"
+             
+             # Como o script anterior removeu a última chave '}' antes de adicionar o código,
+             # ao deletar o código, o arquivo fica sem fechar a classe.
+             # Vamos garantir que a classe fecha corretamente adicionando a chave final.
+             # Mas antes, verificamos se ela já não existe para não duplicar.
+             
+             tail -n 1 "$FILE" | grep -q "}" || echo "}" >> "$FILE"
+             
+             echo "Arquivo PPU.kt limpo."
+          fi
 
-             # 1. Injetar a chamada de renderização dentro de updateCycles
-             # Insere a chamada logo após o início do H-Blank
+      # ------------------------------------------------------------------
+      # 2. RE-INJETAR CORRETAMENTE (USANDO COMPANION OBJECT COMO ÂNCORA)
+      # ------------------------------------------------------------------
+      - name: Inject Renderer Correctly
+        run: |
+          FILE="app/src/main/java/de/dde/snes/ppu/PPU.kt"
+          
+          if [ -f "$FILE" ]; then
+             echo ">>> Injetando renderizador no contexto correto..."
+
+             # 1. Re-inserir a chamada da função (Call site)
              sed -i '/if (hoffset == FIRST_H_OFFSET + snes.version.width) {/a \                renderScanline(voffset)' "$FILE"
 
-             # 2. Preparar o arquivo para receber a nova função
-             # Removemos a última linha (a chave de fechamento '}') para anexar o código antes dela
-             head -n -1 "$FILE" > temp_ppu.kt
-             
-             # 3. Escrever a função de renderização (Usando printf para evitar erro de YAML)
-             # Nota: Usamos \n para quebra de linha. Isso evita o erro de "dois pontos" do YAML.
-             
-             printf "\n" >> temp_ppu.kt
-             printf "    // --- DEBUG RENDERER (V2 SAFE) ---\n" >> temp_ppu.kt
-             printf "    private fun getIntColor(c: Int): Int {\n" >> temp_ppu.kt
-             printf "        val r = (c and 0x1F) shl 3\n" >> temp_ppu.kt
-             printf "        val g = ((c shr 5) and 0x1F) shl 3\n" >> temp_ppu.kt
-             printf "        val b = ((c shr 10) and 0x1F) shl 3\n" >> temp_ppu.kt
-             printf "        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b\n" >> temp_ppu.kt
-             printf "    }\n\n" >> temp_ppu.kt
+             # 2. Preparar o código da função (Definição)
+             # Vamos escrever num arquivo temporário
+             cat <<EOF > renderer_code.kt
 
-             printf "    private fun renderScanline(y: Int) {\n" >> temp_ppu.kt
-             printf "        if (y < 0 || y >= 224) return\n" >> temp_ppu.kt
-             printf "        val bgColor = getIntColor(cgram.colors[0].value)\n" >> temp_ppu.kt
-             printf "        for (x in 0 until 256) {\n" >> temp_ppu.kt
-             printf "            val index = y * 256 + x\n" >> temp_ppu.kt
-             printf "            val vramIndex = index %% vram.vram.size\n" >> temp_ppu.kt
-             printf "            val pixelData = vram.vram[vramIndex].toInt()\n" >> temp_ppu.kt
-             printf "            if (pixelData != 0) {\n" >> temp_ppu.kt
-             printf "                videoBuffer[index] = bgColor or 0x00505050\n" >> temp_ppu.kt
-             printf "            } else {\n" >> temp_ppu.kt
-             printf "                videoBuffer[index] = bgColor\n" >> temp_ppu.kt
-             printf "            }\n" >> temp_ppu.kt
-             printf "        }\n" >> temp_ppu.kt
-             printf "    }\n" >> temp_ppu.kt
-             printf "}\n" >> temp_ppu.kt
+    // --- DEBUG RENDERER (FIXED) ---
+    private fun getIntColor(c: Int): Int {
+        val r = (c and 0x1F) shl 3
+        val g = ((c shr 5) and 0x1F) shl 3
+        val b = ((c shr 10) and 0x1F) shl 3
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+    }
 
-             # Substitui o arquivo original
-             mv temp_ppu.kt "$FILE"
+    private fun renderScanline(y: Int) {
+        if (y < 0 || y >= 224) return
+        // Usa try-catch para evitar crash se a paleta não estiver pronta
+        try {
+            val bgColor = getIntColor(cgram.colors[0].value)
+            for (x in 0 until 256) {
+                val index = y * 256 + x
+                if (index < videoBuffer.size) {
+                    val vramIndex = index % vram.vram.size
+                    val pixelData = vram.vram[vramIndex].toInt()
+                    
+                    if (pixelData != 0) {
+                        videoBuffer[index] = bgColor or 0x00505050
+                    } else {
+                        videoBuffer[index] = bgColor
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Ignora erros de renderização no boot
+        }
+    }
+EOF
              
-             echo "Lógica de renderização injetada com sucesso."
+             # 3. Inserir ANTES do companion object
+             # O arquivo original tem um "companion object" no final. 
+             # Inserir antes dele garante que estamos DENTRO da classe PPU e temos acesso a 'vram', 'cgram', etc.
+             
+             # O comando 'e' do sed executa um comando externo (cat) e insere o resultado
+             # Achar "companion object" e inserir o conteúdo de renderer_code.kt antes dele
+             sed -i '/companion object {/e cat renderer_code.kt' "$FILE"
+             
+             # Caso o sed 'e' não funcione em algumas versões Linux minimalistas, usamos uma alternativa:
+             # Ler o arquivo até "companion object", inserir código, ler o resto.
+             # Mas o GitHub Actions usa Ubuntu moderno, sed -i deve funcionar. 
+             # Se falhar, o script aborta.
+             
+             rm renderer_code.kt
+             echo "Renderizador injetado com sucesso."
           else
-             echo "ERRO: PPU.kt não encontrado"
+             echo "ERRO: PPU.kt não encontrado."
              exit 1
           fi
 
       # ------------------------------------------------------------------
-      # COMMIT E PUSH
+      # 3. COMMIT
       # ------------------------------------------------------------------
-      - name: Commit Renderer
+      - name: Commit Fix
         run: |
           git add .
           if git diff-index --quiet HEAD --; then
              echo "Nada mudou."
           else
-             git commit -m "Feat: Add Debug Renderer (Safe Injection)"
+             git commit -m "Fix: Re-inject renderer inside Class scope"
              git push
           fi
