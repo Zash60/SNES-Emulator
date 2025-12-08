@@ -119,7 +119,7 @@ class PPU(
 
     // TODO
     var delta = 0L
-    fun updateCycles(_: Long, delta: Long) {
+    fun updateCycles(cycles: Long, delta: Long) {
         this.delta += delta
 
         while(this.delta >= CYCLES_PER_TICK) {
