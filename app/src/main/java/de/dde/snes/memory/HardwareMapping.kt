@@ -1,3 +1,5 @@
+@file:Suppress("UNUSED_PARAMETER")
+
 package de.dde.snes.memory
 
 import de.dde.snes.*

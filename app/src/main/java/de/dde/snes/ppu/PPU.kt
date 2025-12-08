@@ -1,3 +1,5 @@
+@file:Suppress("UNUSED_PARAMETER")
+
 package de.dde.snes.ppu
 
 import de.dde.snes.*
