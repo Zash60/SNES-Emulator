@@ -1,4 +1,4 @@
-name: Fix Emulator Speed (Main Loop)
+name: Force Video Test (YAML Safe)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 jobs:
-  fix-speed:
+  inject-test-pattern:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,180 +22,60 @@ jobs:
           git config --global user.email "actions@github.com"
 
       # ------------------------------------------------------------------
-      # REESCREVER MAIN ACTIVITY COM LOOP CORRETO
+      # INJETAR PADRÃO DE TESTE ARCO-ÍRIS (MÉTODO BLINDADO)
       # ------------------------------------------------------------------
-      - name: Fix Main Loop in MainActivity
+      - name: Inject Rainbow Pattern using Printf
         run: |
-          echo ">>> Corrigindo o loop de emulação para rodar na velocidade real..."
+          FILE="app/src/main/java/de/dde/snes/ppu/PPU.kt"
           
-          cat <<EOF > app/src/main/java/de/dde/snes/MainActivity.kt
-          package de.dde.snes
+          if [ -f "$FILE" ]; then
+             echo ">>> Substituindo renderizador por Padrão de Teste..."
 
-          import android.net.Uri
-          import android.os.Bundle
-          import android.widget.Button
-          import android.widget.LinearLayout
-          import android.widget.TextView
-          import android.widget.Toast
-          import android.view.Gravity
-          import android.view.View
-          import androidx.activity.result.contract.ActivityResultContracts
-          import androidx.appcompat.app.AppCompatActivity
-          import java.io.InputStream
-          
-          import de.dde.snes.cartridge.Cartridge
-          import de.dde.snes.SNES
-
-          class MainActivity : AppCompatActivity() {
-
-              private lateinit var statusText: TextView
-              private lateinit var emulatorView: EmulatorView
-              private lateinit var layoutContainer: LinearLayout
-              private lateinit var btnLoad: Button
-              
-              private val snes = SNES()
-              @Volatile private var isEmulationRunning = false
-
-              private val loadRomLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-                  if (uri != null) {
-                      loadAndStartRom(uri)
-                  }
-              }
-
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-
-                  layoutContainer = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      gravity = Gravity.CENTER
-                      setBackgroundColor(0xFF202020.toInt()) // Cinza escuro para diferenciar do preto do jogo
-                  }
-
-                  emulatorView = EmulatorView(this).apply {
-                      layoutParams = LinearLayout.LayoutParams(
-                          LinearLayout.LayoutParams.MATCH_PARENT,
-                          0, 
-                          1f
-                      )
-                  }
-
-                  btnLoad = Button(this).apply {
-                      text = "CARREGAR JOGO"
-                      textSize = 20f
-                      setOnClickListener {
-                          loadRomLauncher.launch(arrayOf("*/*"))
-                      }
-                  }
-
-                  statusText = TextView(this).apply {
-                      text = "SNES Core Ready"
-                      setTextColor(0xFFFFFFFF.toInt())
-                      textSize = 14f
-                      gravity = Gravity.CENTER
-                      setPadding(20, 20, 20, 20)
-                  }
-
-                  layoutContainer.addView(emulatorView)
-                  layoutContainer.addView(statusText)
-                  layoutContainer.addView(btnLoad)
-                  
-                  setContentView(layoutContainer)
-              }
-
-              private fun loadAndStartRom(uri: Uri) {
-                  try {
-                      isEmulationRunning = false
-                      Thread.sleep(100) 
-
-                      val contentResolver = applicationContext.contentResolver
-                      val inputStream: InputStream? = contentResolver.openInputStream(uri)
-                      
-                      if (inputStream != null) {
-                          val romBytes = inputStream.readBytes()
-                          inputStream.close()
-
-                          // Cria o cartucho e reseta o console
-                          val cartridge = Cartridge(romBytes)
-                          snes.reset()
-                          snes.insertCartridge(cartridge)
-                          // Reset novamente após inserir o cartucho para garantir vetores corretos
-                          snes.reset()
-                          
-                          statusText.text = "Rodando: \${cartridge.header.name}"
-                          btnLoad.visibility = View.GONE
-                          
-                          isEmulationRunning = true
-                          startEmulationLoop()
-                      }
-                  } catch (e: Exception) {
-                      statusText.text = "Erro: \${e.message}"
-                      e.printStackTrace()
-                  }
-              }
-
-              private fun startEmulationLoop() {
-                  Thread {
-                      try {
-                          while (isEmulationRunning) {
-                              // --- LOOP DO QUADRO (FRAME) ---
-                              // Executa o processador loucamente até completar 1 quadro de vídeo
-                              
-                              snes.ppu.frameReady = false
-                              
-                              while (!snes.ppu.frameReady && isEmulationRunning) {
-                                  // 1. Guarda ciclos atuais
-                                  val cyclesBefore = snes.processor.cycles
-                                  
-                                  // 2. Executa UMA instrução do SNES
-                                  snes.processor.executeNextInstruction()
-                                  
-                                  // 3. Calcula quantos ciclos passaram
-                                  val cyclesDelta = snes.processor.cycles - cyclesBefore
-                                  
-                                  // 4. Atualiza o PPU (Placa de vídeo) com esse tempo
-                                  // O PPU vai desenhar a linha (scanline) quando tiver ciclos suficientes
-                                  snes.ppu.updateCycles(snes.processor.cycles, cyclesDelta)
-                              }
-
-                              // --- FIM DO QUADRO ---
-                              // Se chegamos aqui, o PPU terminou de desenhar a tela (V-Blank)
-                              
-                              if (isEmulationRunning) {
-                                  // Copia o buffer de vídeo para a UI
-                                  val pixels = snes.ppu.videoBuffer
-                                  
-                                  // runOnUiThread é pesado se chamado muitas vezes, 
-                                  // mas 60 vezes por segundo é aceitável.
-                                  runOnUiThread {
-                                      emulatorView.updateFrame(pixels)
-                                  }
-                                  
-                                  // Limitador de velocidade simples (60 FPS)
-                                  // O ideal seria contar o tempo real, mas sleep(16) resolve por agora.
-                                  Thread.sleep(16)
-                              }
-                          }
-                      } catch (e: Exception) {
-                          e.printStackTrace()
-                          runOnUiThread {
-                              statusText.text = "Crash na CPU: \${e.message}"
-                              btnLoad.visibility = View.VISIBLE
-                          }
-                      }
-                  }.start()
-              }
-          }
-          EOF
+             # 1. Limpar funções de renderização antigas para evitar duplicidade
+             # Removemos qualquer função renderScanline ou getIntColor existente
+             sed -i '/private fun renderScanline/,/}/d' "$FILE"
+             sed -i '/private fun getIntColor/,/}/d' "$FILE"
+             
+             # 2. Criar o código do Padrão de Teste usando PRINTF
+             # O uso de printf evita que o YAML interprete os dois pontos (:) como erro
+             
+             printf "\n" > test_code.kt
+             printf "    // --- MODO DE TESTE (RAINBOW) ---\n" >> test_code.kt
+             # Note: y: Int está entre aspas, o YAML não vai reclamar
+             printf "    private fun renderScanline(y: Int) {\n" >> test_code.kt
+             printf "        if (y < 0 || y >= 224) return\n" >> test_code.kt
+             printf "        for (x in 0 until 256) {\n" >> test_code.kt
+             printf "            val index = y * 256 + x\n" >> test_code.kt
+             printf "            if (index < videoBuffer.size) {\n" >> test_code.kt
+             printf "                val r = (x * 1) %% 255\n" >> test_code.kt
+             printf "                val g = (y * 1) %% 255\n" >> test_code.kt
+             printf "                val b = (x + y) %% 255\n" >> test_code.kt
+             printf "                val color = (0xFF shl 24) or (r shl 16) or (g shl 8) or b\n" >> test_code.kt
+             printf "                videoBuffer[index] = color\n" >> test_code.kt
+             printf "            }\n" >> test_code.kt
+             printf "        }\n" >> test_code.kt
+             printf "    }\n" >> test_code.kt
+             
+             # 3. Inserir o código dentro da classe PPU
+             # Usamos 'companion object' como âncora, inserindo antes dele
+             sed -i '/companion object {/e cat test_code.kt' "$FILE"
+             
+             rm test_code.kt
+             echo "Código injetado com sucesso."
+          else
+             echo "ERRO: PPU.kt não encontrado."
+             exit 1
+          fi
 
       # ------------------------------------------------------------------
       # COMMIT E PUSH
       # ------------------------------------------------------------------
-      - name: Commit Speed Fix
+      - name: Commit Test Pattern
         run: |
           git add .
           if git diff-index --quiet HEAD --; then
              echo "Nada mudou."
           else
-             git commit -m "Fix: Correct Main Loop to run at full speed"
+             git commit -m "Debug: Inject Rainbow Test Pattern (Safe Mode)"
              git push
           fi
