@@ -9,10 +9,10 @@ import de.dde.snes.memory.MemoryMapping
 import de.dde.snes.memory.ShortAddress
 
 class PPU(
-    var frameReady = false
-    val videoBuffer = IntArray(256 * 240) // Resolução máxima SNES
     private val snes: SNES
 ) : MemoryMapping {
+    var frameReady = false
+    val videoBuffer = IntArray(256 * 240) // Buffer de Video
     val oam = OAM()
     val vram = VRAM()
     val cgram = CGRAM()
