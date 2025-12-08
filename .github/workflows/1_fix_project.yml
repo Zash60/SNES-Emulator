@@ -1,4 +1,4 @@
-name: Fix PPU Renderer Context
+name: Fix PPU Syntax (YAML Safe Mode)
 
 on:
   workflow_dispatch:
@@ -22,96 +22,79 @@ jobs:
           git config --global user.email "actions@github.com"
 
       # ------------------------------------------------------------------
-      # 1. LIMPEZA (REMOVER CÓDIGO QUEBRADO)
+      # 1. LIMPEZA (REMOVER CÓDIGO QUEBRADO ANTERIOR)
       # ------------------------------------------------------------------
       - name: Clean Bad Injection
         run: |
           FILE="app/src/main/java/de/dde/snes/ppu/PPU.kt"
           
           if [ -f "$FILE" ]; then
-             echo ">>> Limpando injeção anterior quebrada..."
+             echo ">>> Limpando injeções quebradas..."
              
-             # Remove a chamada que estava dando erro "Unresolved reference"
+             # Remove a chamada que estava solta
              sed -i '/renderScanline(voffset)/d' "$FILE"
              
-             # Remove todo o bloco de código adicionado no final do arquivo na tentativa anterior
-             # O comando sed deleta da linha que contém o comentário até o final do arquivo ($d)
-             sed -i '/\/\/ --- DEBUG RENDERER/,$d' "$FILE"
+             # Remove blocos de tentativas anteriores (limpa do comentário até o fim, ou linhas específicas)
+             sed -i '/\/\/ --- DEBUG RENDERER/d' "$FILE"
+             sed -i '/private fun getIntColor/d' "$FILE"
+             sed -i '/private fun renderScanline/d' "$FILE"
              
-             # Como o script anterior removeu a última chave '}' antes de adicionar o código,
-             # ao deletar o código, o arquivo fica sem fechar a classe.
-             # Vamos garantir que a classe fecha corretamente adicionando a chave final.
-             # Mas antes, verificamos se ela já não existe para não duplicar.
+             # Assegura que o arquivo termina corretamente (caso a chave } tenha sumido)
+             # Mas cuidado para não duplicar. Vamos confiar que o sed acima limpou o miolo.
              
-             tail -n 1 "$FILE" | grep -q "}" || echo "}" >> "$FILE"
-             
-             echo "Arquivo PPU.kt limpo."
+             echo "Arquivo limpo."
           fi
 
       # ------------------------------------------------------------------
-      # 2. RE-INJETAR CORRETAMENTE (USANDO COMPANION OBJECT COMO ÂNCORA)
+      # 2. INJETAR USANDO PRINTF (EVITA ERRO DE DOIS PONTOS NO YAML)
       # ------------------------------------------------------------------
-      - name: Inject Renderer Correctly
+      - name: Inject Renderer Safely
         run: |
           FILE="app/src/main/java/de/dde/snes/ppu/PPU.kt"
           
           if [ -f "$FILE" ]; then
-             echo ">>> Injetando renderizador no contexto correto..."
+             echo ">>> Injetando renderizador de forma segura..."
 
-             # 1. Re-inserir a chamada da função (Call site)
+             # 1. Inserir a chamada (Call site)
              sed -i '/if (hoffset == FIRST_H_OFFSET + snes.version.width) {/a \                renderScanline(voffset)' "$FILE"
 
-             # 2. Preparar o código da função (Definição)
-             # Vamos escrever num arquivo temporário
-             cat <<EOF > renderer_code.kt
-
-    // --- DEBUG RENDERER (FIXED) ---
-    private fun getIntColor(c: Int): Int {
-        val r = (c and 0x1F) shl 3
-        val g = ((c shr 5) and 0x1F) shl 3
-        val b = ((c shr 10) and 0x1F) shl 3
-        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-    }
-
-    private fun renderScanline(y: Int) {
-        if (y < 0 || y >= 224) return
-        // Usa try-catch para evitar crash se a paleta não estiver pronta
-        try {
-            val bgColor = getIntColor(cgram.colors[0].value)
-            for (x in 0 until 256) {
-                val index = y * 256 + x
-                if (index < videoBuffer.size) {
-                    val vramIndex = index % vram.vram.size
-                    val pixelData = vram.vram[vramIndex].toInt()
-                    
-                    if (pixelData != 0) {
-                        videoBuffer[index] = bgColor or 0x00505050
-                    } else {
-                        videoBuffer[index] = bgColor
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // Ignora erros de renderização no boot
-        }
-    }
-EOF
+             # 2. Preparar o código Kotlin usando PRINTF (Isso protege os dois pontos ':')
+             # Criamos o arquivo renderer.txt com o código
              
-             # 3. Inserir ANTES do companion object
-             # O arquivo original tem um "companion object" no final. 
-             # Inserir antes dele garante que estamos DENTRO da classe PPU e temos acesso a 'vram', 'cgram', etc.
+             printf "\n" > renderer.txt
+             printf "    // --- DEBUG RENDERER ---\n" >> renderer.txt
+             printf "    private fun getIntColor(c: Int): Int {\n" >> renderer.txt
+             printf "        val r = (c and 0x1F) shl 3\n" >> renderer.txt
+             printf "        val g = ((c shr 5) and 0x1F) shl 3\n" >> renderer.txt
+             printf "        val b = ((c shr 10) and 0x1F) shl 3\n" >> renderer.txt
+             printf "        return (0xFF shl 24) or (r shl 16) or (g shl 8) or b\n" >> renderer.txt
+             printf "    }\n\n" >> renderer.txt
              
-             # O comando 'e' do sed executa um comando externo (cat) e insere o resultado
-             # Achar "companion object" e inserir o conteúdo de renderer_code.kt antes dele
-             sed -i '/companion object {/e cat renderer_code.kt' "$FILE"
+             printf "    private fun renderScanline(y: Int) {\n" >> renderer.txt
+             printf "        if (y < 0 || y >= 224) return\n" >> renderer.txt
+             printf "        try {\n" >> renderer.txt
+             printf "            val bgColor = getIntColor(cgram.colors[0].value)\n" >> renderer.txt
+             printf "            for (x in 0 until 256) {\n" >> renderer.txt
+             printf "                val index = y * 256 + x\n" >> renderer.txt
+             printf "                if (index < videoBuffer.size) {\n" >> renderer.txt
+             printf "                    val vramIndex = index %% vram.vram.size\n" >> renderer.txt
+             printf "                    val pixelData = vram.vram[vramIndex].toInt()\n" >> renderer.txt
+             printf "                    if (pixelData != 0) {\n" >> renderer.txt
+             printf "                        videoBuffer[index] = bgColor or 0x00505050\n" >> renderer.txt
+             printf "                    } else {\n" >> renderer.txt
+             printf "                        videoBuffer[index] = bgColor\n" >> renderer.txt
+             printf "                    }\n" >> renderer.txt
+             printf "                }\n" >> renderer.txt
+             printf "            }\n" >> renderer.txt
+             printf "        } catch (e: Exception) {}\n" >> renderer.txt
+             printf "    }\n" >> renderer.txt
              
-             # Caso o sed 'e' não funcione em algumas versões Linux minimalistas, usamos uma alternativa:
-             # Ler o arquivo até "companion object", inserir código, ler o resto.
-             # Mas o GitHub Actions usa Ubuntu moderno, sed -i deve funcionar. 
-             # Se falhar, o script aborta.
+             # 3. Inserir o conteúdo de renderer.txt ANTES da linha "companion object"
+             # Isso garante que fique dentro da classe PPU
+             sed -i '/companion object {/e cat renderer.txt' "$FILE"
              
-             rm renderer_code.kt
-             echo "Renderizador injetado com sucesso."
+             rm renderer.txt
+             echo "Código injetado com sucesso."
           else
              echo "ERRO: PPU.kt não encontrado."
              exit 1
@@ -126,6 +109,6 @@ EOF
           if git diff-index --quiet HEAD --; then
              echo "Nada mudou."
           else
-             git commit -m "Fix: Re-inject renderer inside Class scope"
+             git commit -m "Fix: Inject PPU code using printf to avoid YAML syntax errors"
              git push
           fi
