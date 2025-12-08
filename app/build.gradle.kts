@@ -28,11 +28,6 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
-    sourceSets {
-        getByName("main") {
-            resources.srcDirs("src/main/resources")
-        }
-    }
     lint {
         abortOnError = false
     }
