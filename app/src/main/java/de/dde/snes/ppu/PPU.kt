@@ -169,29 +169,36 @@ class PPU(
         voffsetLatched = voffset
     }
 
-    // --- RENDERIZADOR DE TESTE (ARCO-IRIS) ---
-    // Isso garante que veremos algo na tela se o emulador estiver rodando
+// --- RENDERIZADOR MINIMALISTA (COR DE FUNDO) ---
+// Garante que a tela não fique preta se o emulador estiver rodando e o PPU estiver ativo.
+private fun renderScanline(y: Int) {
+    if (y < 0 || y >= 224) return
 
-    // --- VRAM DEBUG VIEWER ---
-    private fun renderScanline(y: Int) {
-        if (y < 0 || y >= 224) return
-        // Cor de fundo fixa (Preto)
-        val bgColor = 0xFF000000.toInt()
+    // Se forceBlank estiver ativo, a tela deve ser preta.
+    if (forceBlank) {
+        val black = 0xFF000000.toInt()
         for (x in 0 until 256) {
             val index = y * 256 + x
             if (index < videoBuffer.size) {
-                // Mapeia pixel da tela -> byte da VRAM
-                val vramIndex = index % vram.vram.size
-                val pixelData = vram.vram[vramIndex].toInt()
-                if (pixelData != 0) {
-                    // Se tem dados, pinta de branco (mostra graficos)
-                    videoBuffer[index] = 0xFFFFFFFF.toInt()
-                } else {
-                    videoBuffer[index] = bgColor
-                }
+                videoBuffer[index] = black
             }
         }
+        return
     }
+
+    // Cor de fundo é o primeiro registro da CGRAM (paleta 0)
+    // O valor é um Int (ARGB) já convertido de 15-bit SNES para 32-bit Android.
+    val bgColor = cgram.get(0)
+
+    for (x in 0 until 256) {
+        val index = y * 256 + x
+        if (index < videoBuffer.size) {
+            // Renderização minimalista: apenas a cor de fundo.
+            // A lógica completa de BG/OBJ/Color Math deve ser implementada aqui.
+            videoBuffer[index] = bgColor
+        }
+    }
+}
 
     override fun readByte(bank: Bank, address: ShortAddress): Int {
         return when (address) {
