@@ -1,7 +1,7 @@
 name: 1. Fix Project Structure (Migration)
 
 on:
-  workflow_dispatch: # Deve ser rodado MANUALMENTE na aba Actions
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -27,18 +27,22 @@ jobs:
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
 
-      - name: Nuke Old Configs (Fix Gradle 9 Error)
+      - name: Reset Environment & Generate Wrapper
         run: |
-          # Removemos os arquivos de build antigos antes de rodar o gradle wrapper
-          # Isso impede que o Gradle 9 tente ler plugins incompatíveis e falhe
+          echo ">>> 1. Limpando configurações antigas..."
           rm -f build.gradle.kts build.gradle settings.gradle.kts settings.gradle
-          rm -rf app/build.gradle.kts
-          echo "Old build configurations removed."
+          rm -rf app/build.gradle.kts gradle/wrapper
 
-      - name: Generate Gradle Wrapper 8.4
-        run: |
-          # Agora podemos gerar o wrapper 8.4 sem erros
+          echo ">>> 2. Criando configuração temporária para o Gradle 9..."
+          # Criamos um settings.gradle vazio. Isso satisfaz o Gradle 9 sem causar erro de plugins.
+          echo "rootProject.name = 'TEMP-FIX'" > settings.gradle
+
+          echo ">>> 3. Gerando Gradle Wrapper 8.4..."
+          # Agora o comando funciona porque existe um settings.gradle
           gradle wrapper --gradle-version 8.4 --distribution-type bin
+
+          echo ">>> 4. Validando Wrapper..."
+          ./gradlew --version
 
       - name: Create Android Project Structure
         run: |
@@ -47,26 +51,25 @@ jobs:
           mkdir -p app/src/main/res/values
           mkdir -p app/src/main/res/mipmap-hdpi
           
-          # 2. Mover código fonte (se ainda estiver na pasta antiga)
+          # 2. Mover código fonte
           if [ -d "src/main/kotlin" ]; then
              cp -r src/main/kotlin/* app/src/main/java/
-             # Limpar pasta antiga
              rm -rf src
           fi
           
-          # Mover resources
+          # 3. Mover resources
           if [ -d "src/main/resources" ]; then
              mkdir -p app/src/main/resources
              cp -r src/main/resources/* app/src/main/resources/
           fi
 
-          # 3. Remover arquivos que quebram o Android (Testes Desktop, Swing, etc)
+          # 4. Remover arquivos incompatíveis com Android
           find app/src/main/java -name "*Test.kt" -delete
           find app/src/main/java -name "SNESTest.kt" -delete
 
-      - name: Write New Configuration Files
+      - name: Write Android Configuration
         run: |
-          # Settings.gradle.kts
+          # Agora sobrescrevemos o settings.gradle temporário com o real
           cat <<EOF > settings.gradle.kts
           pluginManagement {
               repositories {
@@ -86,7 +89,6 @@ jobs:
           include(":app")
           EOF
 
-          # Root build.gradle.kts
           cat <<EOF > build.gradle.kts
           plugins {
               id("com.android.application") version "8.2.0" apply false
@@ -94,7 +96,6 @@ jobs:
           }
           EOF
 
-          # App build.gradle.kts
           cat <<EOF > app/build.gradle.kts
           plugins {
               id("com.android.application")
@@ -166,7 +167,7 @@ jobs:
           </manifest>
           EOF
 
-          # Criar MainActivity Stub
+          # MainActivity Stub
           mkdir -p app/src/main/java/de/dde/snes
           if [ ! -f "app/src/main/java/de/dde/snes/MainActivity.kt" ]; then
           cat <<EOF > app/src/main/java/de/dde/snes/MainActivity.kt
@@ -179,7 +180,7 @@ jobs:
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   val tv = TextView(this)
-                  tv.text = "Emulator Ready"
+                  tv.text = "Emulator Core Ready"
                   tv.gravity = Gravity.CENTER
                   setContentView(tv)
               }
@@ -187,10 +188,10 @@ jobs:
           EOF
           fi
           
-          # Limpeza final
+          # Limpar metadados de IDE
           rm -rf .idea *.iml
-          
-          # .gitignore
+
+          # Criar .gitignore limpo
           cat <<EOF > .gitignore
           *.iml
           .gradle
@@ -206,6 +207,6 @@ jobs:
           if git diff-index --quiet HEAD --; then
              echo "No changes to commit."
           else
-             git commit -m "Fix project structure and force Gradle 8.4 wrapper"
+             git commit -m "Fix structure and Wrapper generation"
              git push
           fi
