@@ -171,23 +171,27 @@ class PPU(
 
     // --- RENDERIZADOR DE TESTE (ARCO-IRIS) ---
     // Isso garante que veremos algo na tela se o emulador estiver rodando
+
+    // --- VRAM DEBUG VIEWER ---
     private fun renderScanline(y: Int) {
         if (y < 0 || y >= 224) return
-        
+        // Cor de fundo fixa (Preto)
+        val bgColor = 0xFF000000.toInt()
         for (x in 0 until 256) {
             val index = y * 256 + x
             if (index < videoBuffer.size) {
-                // Gera cor baseada na posição (X/Y)
-                val r = (x * 1) % 255
-                val g = (y * 1) % 255
-                val b = (x + y) % 255
-                
-                // ARGB
-                videoBuffer[index] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                // Mapeia pixel da tela -> byte da VRAM
+                val vramIndex = index % vram.vram.size
+                val pixelData = vram.vram[vramIndex].toInt()
+                if (pixelData != 0) {
+                    // Se tem dados, pinta de branco (mostra graficos)
+                    videoBuffer[index] = 0xFFFFFFFF.toInt()
+                } else {
+                    videoBuffer[index] = bgColor
+                }
             }
         }
     }
-    // ----------------------------------------
 
     override fun readByte(bank: Bank, address: ShortAddress): Int {
         return when (address) {
