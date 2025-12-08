@@ -1,4 +1,4 @@
-name: 1. Fix Project Structure (Migration)
+name: Fix Android Structure & Gradle
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 jobs:
-  fix-structure:
+  fix-project:
     runs-on: ubuntu-latest
 
     steps:
@@ -27,49 +27,35 @@ jobs:
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
 
-      - name: Reset Environment & Generate Wrapper
+      # ------------------------------------------------------------------
+      # 1. LIMPEZA TOTAL DE CONFIGURAÇÕES ANTIGAS
+      # ------------------------------------------------------------------
+      - name: Nuke Old Configs
         run: |
-          echo ">>> 1. Limpando configurações antigas..."
+          echo "Removendo configurações antigas..."
           rm -f build.gradle.kts build.gradle settings.gradle.kts settings.gradle
-          rm -rf app/build.gradle.kts gradle/wrapper
+          rm -rf app/build.gradle.kts gradle/wrapper gradlew gradlew.bat
 
-          echo ">>> 2. Criando configuração temporária para o Gradle 9..."
-          # Criamos um settings.gradle vazio. Isso satisfaz o Gradle 9 sem causar erro de plugins.
-          echo "rootProject.name = 'TEMP-FIX'" > settings.gradle
-
-          echo ">>> 3. Gerando Gradle Wrapper 8.4..."
-          # Agora o comando funciona porque existe um settings.gradle
+      # ------------------------------------------------------------------
+      # 2. GERAR WRAPPER 8.4 (Usando truque para Gradle 9)
+      # ------------------------------------------------------------------
+      - name: Generate Gradle Wrapper 8.4
+        run: |
+          # Cria um settings vazio apenas para o Gradle 9 não reclamar
+          echo "rootProject.name = 'TEMP'" > settings.gradle
+          
+          # Gera o wrapper 8.4
           gradle wrapper --gradle-version 8.4 --distribution-type bin
-
-          echo ">>> 4. Validando Wrapper..."
-          ./gradlew --version
-
-      - name: Create Android Project Structure
-        run: |
-          # 1. Estrutura de pastas
-          mkdir -p app/src/main/java
-          mkdir -p app/src/main/res/values
-          mkdir -p app/src/main/res/mipmap-hdpi
           
-          # 2. Mover código fonte
-          if [ -d "src/main/kotlin" ]; then
-             cp -r src/main/kotlin/* app/src/main/java/
-             rm -rf src
-          fi
-          
-          # 3. Mover resources
-          if [ -d "src/main/resources" ]; then
-             mkdir -p app/src/main/resources
-             cp -r src/main/resources/* app/src/main/resources/
-          fi
+          # IMPORTANTE: Apaga o settings temporário para não conflitar com o KTS
+          rm settings.gradle
 
-          # 4. Remover arquivos incompatíveis com Android
-          find app/src/main/java -name "*Test.kt" -delete
-          find app/src/main/java -name "SNESTest.kt" -delete
-
-      - name: Write Android Configuration
+      # ------------------------------------------------------------------
+      # 3. RECRIAÇÃO DOS ARQUIVOS DE CONFIGURAÇÃO (CORRIGIDOS)
+      # ------------------------------------------------------------------
+      - name: Write Correct Configuration Files
         run: |
-          # Agora sobrescrevemos o settings.gradle temporário com o real
+          # 1. settings.gradle.kts (Define onde baixar os plugins)
           cat <<EOF > settings.gradle.kts
           pluginManagement {
               repositories {
@@ -89,6 +75,7 @@ jobs:
           include(":app")
           EOF
 
+          # 2. build.gradle.kts (Raiz)
           cat <<EOF > build.gradle.kts
           plugins {
               id("com.android.application") version "8.2.0" apply false
@@ -96,6 +83,10 @@ jobs:
           }
           EOF
 
+          # 3. Criar diretório app se não existir
+          mkdir -p app
+
+          # 4. app/build.gradle.kts
           cat <<EOF > app/build.gradle.kts
           plugins {
               id("com.android.application")
@@ -127,11 +118,6 @@ jobs:
               kotlinOptions {
                   jvmTarget = "1.8"
               }
-              sourceSets {
-                  getByName("main") {
-                      resources.srcDirs("src/main/resources")
-                  }
-              }
               lint {
                   abortOnError = false
               }
@@ -145,11 +131,29 @@ jobs:
           }
           EOF
 
-          # AndroidManifest.xml
-          cat <<EOF > app/src/main/AndroidManifest.xml
+      # ------------------------------------------------------------------
+      # 4. ORGANIZAÇÃO DE PASTAS E ARQUIVOS FALTANTES
+      # ------------------------------------------------------------------
+      - name: Organize Project Structure
+        run: |
+          mkdir -p app/src/main/java
+          
+          # Mover código se estiver na raiz antiga
+          if [ -d "src/main/kotlin" ]; then
+             cp -r src/main/kotlin/* app/src/main/java/
+             rm -rf src
+          fi
+          
+          # Remover arquivos que quebram o build (Testes e Swing)
+          find app/src/main/java -name "*Test.kt" -delete
+          find app/src/main/java -name "SNESTest.kt" -delete
+
+          # Criar Manifest se não existir
+          mkdir -p app/src/main
+          if [ ! -f "app/src/main/AndroidManifest.xml" ]; then
+            cat <<EOF > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
               <application
                   android:allowBackup="true"
                   android:icon="@mipmap/ic_launcher"
@@ -166,11 +170,12 @@ jobs:
               </application>
           </manifest>
           EOF
+          fi
 
-          # MainActivity Stub
+          # Criar MainActivity se não existir
           mkdir -p app/src/main/java/de/dde/snes
           if [ ! -f "app/src/main/java/de/dde/snes/MainActivity.kt" ]; then
-          cat <<EOF > app/src/main/java/de/dde/snes/MainActivity.kt
+            cat <<EOF > app/src/main/java/de/dde/snes/MainActivity.kt
           package de.dde.snes
           import android.os.Bundle
           import androidx.appcompat.app.AppCompatActivity
@@ -180,18 +185,18 @@ jobs:
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   val tv = TextView(this)
-                  tv.text = "Emulator Core Ready"
+                  tv.text = "Emulator Ready"
                   tv.gravity = Gravity.CENTER
                   setContentView(tv)
               }
           }
           EOF
           fi
-          
-          # Limpar metadados de IDE
-          rm -rf .idea *.iml
 
-          # Criar .gitignore limpo
+          # Limpar IDE files
+          rm -rf .idea *.iml
+          
+          # Criar .gitignore
           cat <<EOF > .gitignore
           *.iml
           .gradle
@@ -201,12 +206,15 @@ jobs:
           /app/build
           EOF
 
-      - name: Commit Repairs
+      # ------------------------------------------------------------------
+      # 5. COMMIT
+      # ------------------------------------------------------------------
+      - name: Commit Fixes
         run: |
           git add .
           if git diff-index --quiet HEAD --; then
              echo "No changes to commit."
           else
-             git commit -m "Fix structure and Wrapper generation"
+             git commit -m "Fix Android structure and plugin repositories"
              git push
           fi
