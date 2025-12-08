@@ -1,13 +1,13 @@
-name: Fix Missing Resources & Properties
+name: Fix Warnings & Add Load ROM Button
 
 on:
-  workflow_dispatch: # Rode manualmente
+  workflow_dispatch: # Rode manualmente na aba Actions
 
 permissions:
   contents: write
 
 jobs:
-  fix-resources:
+  update-code:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,79 +22,153 @@ jobs:
           git config --global user.email "actions@github.com"
 
       # ------------------------------------------------------------------
-      # 1. CRIAR GRADLE.PROPERTIES (Corrige erro de AndroidX)
+      # PARTE 1: CORREÇÃO DE AVISOS (WARNINGS)
       # ------------------------------------------------------------------
-      - name: Create gradle.properties
+      - name: Fix Kotlin Warnings
         run: |
-          echo ">>> Criando gradle.properties..."
-          cat <<EOF > gradle.properties
-          android.useAndroidX=true
-          android.enableJetifier=true
-          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-          EOF
-
-      # ------------------------------------------------------------------
-      # 2. CRIAR ÍCONES FALTANTES (Corrige erro AAPT/Linking)
-      # ------------------------------------------------------------------
-      - name: Create Dummy Icons (XML Vectors)
-        run: |
-          echo ">>> Criando diretórios de recursos..."
-          mkdir -p app/src/main/res/mipmap-hdpi
-          mkdir -p app/src/main/res/values
-
-          echo ">>> Criando ícone 'ic_launcher.xml'..."
-          # Criamos um ícone vetorial simples (quadrado verde) para servir de placeholder
-          # Isso satisfaz o compilador sem precisar fazer upload de binários PNG
-          cat <<EOF > app/src/main/res/mipmap-hdpi/ic_launcher.xml
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="108dp"
-              android:height="108dp"
-              android:viewportWidth="108"
-              android:viewportHeight="108">
-              <path android:fillColor="#008577" android:pathData="M0,0h108v108h-108z"/>
-              <path android:fillColor="#FFFFFF" android:pathData="M54,54m-20,0a20,20 0 1,1 40,0a20,20 0 1,1 -40,0"/>
-          </vector>
-          EOF
-
-          echo ">>> Criando ícone 'ic_launcher_round.xml'..."
-          cp app/src/main/res/mipmap-hdpi/ic_launcher.xml app/src/main/res/mipmap-hdpi/ic_launcher_round.xml
-
-      # ------------------------------------------------------------------
-      # 3. CRIAR ARQUIVOS DE VALORES BÁSICOS (Prevenção)
-      # ------------------------------------------------------------------
-      - name: Create Basic Strings/Colors
-        run: |
-          # Garante que colors.xml existe para não dar erro se o tema referenciar
-          if [ ! -f "app/src/main/res/values/colors.xml" ]; then
-            cat <<EOF > app/src/main/res/values/colors.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <color name="colorPrimary">#008577</color>
-              <color name="colorPrimaryDark">#00574B</color>
-              <color name="colorAccent">#D81B60</color>
-          </resources>
-          EOF
+          echo ">>> Corrigindo .toChar() deprecated..."
+          # Substitui .toChar() por .toInt().toChar()
+          CART_FILE="app/src/main/java/de/dde/snes/cartridge/Cartridge.kt"
+          if [ -f "$CART_FILE" ]; then
+            sed -i 's/\.toChar()/.toInt().toChar()/g' "$CART_FILE"
           fi
-          
-          # Garante que strings.xml existe
-          if [ ! -f "app/src/main/res/values/strings.xml" ]; then
-            cat <<EOF > app/src/main/res/values/strings.xml
-          <resources>
-              <string name="app_name">SNES Emulator</string>
-          </resources>
-          EOF
+
+          echo ">>> Renomeando parâmetros não usados para _ ..."
+          # Renomeia bank -> _
+          HW_FILE="app/src/main/java/de/dde/snes/memory/HardwareMapping.kt"
+          if [ -f "$HW_FILE" ]; then
+             sed -i 's/bank: Bank/_: Bank/g' "$HW_FILE"
+          fi
+
+          # Renomeia cycles -> _
+          PPU_FILE="app/src/main/java/de/dde/snes/ppu/PPU.kt"
+          if [ -f "$PPU_FILE" ]; then
+             sed -i 's/cycles: Long/_: Long/g' "$PPU_FILE"
+             # Comenta variáveis não usadas
+             sed -i 's/val intensity/\/\/ val intensity/g' "$PPU_FILE"
+             sed -i 's/val colorPlanes/\/\/ val colorPlanes/g' "$PPU_FILE"
+          fi
+
+          echo ">>> Suprimindo avisos no arquivo de rascunho..."
+          PROC_FILE="app/src/main/java/de/dde/snes/processor/Processor2.kt"
+          if [ -f "$PROC_FILE" ]; then
+            CONTENT=$(cat "$PROC_FILE")
+            echo "@file:Suppress(\"UNUSED_PARAMETER\")" > "$PROC_FILE"
+            echo "" >> "$PROC_FILE"
+            echo "$CONTENT" >> "$PROC_FILE"
           fi
 
       # ------------------------------------------------------------------
-      # 4. COMMIT E PUSH
+      # PARTE 2: IMPLEMENTAR BOTÃO LOAD ROM NA MAIN ACTIVITY
       # ------------------------------------------------------------------
-      - name: Commit Resource Fixes
+      - name: Add Load ROM Button to MainActivity
         run: |
-          git add gradle.properties app/src/main/res
+          echo ">>> Reescrevendo MainActivity.kt com botão Load ROM..."
           
+          mkdir -p app/src/main/java/de/dde/snes
+          
+          cat <<EOF > app/src/main/java/de/dde/snes/MainActivity.kt
+          package de.dde.snes
+
+          import android.net.Uri
+          import android.os.Bundle
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.TextView
+          import android.widget.Toast
+          import android.view.Gravity
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.appcompat.app.AppCompatActivity
+          import java.io.InputStream
+
+          class MainActivity : AppCompatActivity() {
+
+              private lateinit var statusText: TextView
+
+              // Configura o contrato moderno para abrir arquivos (Scoped Storage)
+              private val loadRomLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+                  if (uri != null) {
+                      loadRom(uri)
+                  } else {
+                      Toast.makeText(this, "Nenhum arquivo selecionado", Toast.LENGTH_SHORT).show()
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  // Layout Simples criado via código (sem XML)
+                  val layout = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER
+                      setPadding(50, 50, 50, 50)
+                  }
+
+                  // Botão Load ROM
+                  val btnLoad = Button(this).apply {
+                      text = "LOAD ROM (SMC/SFC)"
+                      textSize = 18f
+                      setOnClickListener {
+                          // Abre o seletor de arquivos
+                          // Filtra por qualquer tipo para garantir que mostre as ROMs
+                          loadRomLauncher.launch(arrayOf("*/*"))
+                      }
+                  }
+
+                  // Texto de Status
+                  statusText = TextView(this).apply {
+                      text = "SNES Core Initialized.\nSelect a ROM to load into memory."
+                      textSize = 16f
+                      gravity = Gravity.CENTER
+                      setPadding(0, 50, 0, 0)
+                  }
+
+                  layout.addView(btnLoad)
+                  layout.addView(statusText)
+                  setContentView(layout)
+              }
+
+              private fun loadRom(uri: Uri) {
+                  try {
+                      val contentResolver = applicationContext.contentResolver
+                      
+                      // Abre o arquivo usando Stream (Android não usa Paths de disco diretamente)
+                      val inputStream: InputStream? = contentResolver.openInputStream(uri)
+                      
+                      if (inputStream != null) {
+                          // Lê os bytes para a memória (Simulando o carregamento do cartucho)
+                          val bytes = inputStream.readBytes()
+                          inputStream.close()
+
+                          statusText.text = "SUCESSO!\nArquivo: \$uri\nTamanho: \${bytes.size} bytes carregados na RAM.\n\n(Pronto para passar ao Emulator Core)"
+                          
+                          Toast.makeText(this, "ROM Carregada!", Toast.LENGTH_LONG).show()
+                          
+                          // TODO: Aqui você chamará o Core do emulador:
+                          // val cartridge = Cartridge(bytes) 
+                          // snes.insertCartridge(cartridge)
+                          // snes.start()
+                          
+                      } else {
+                          statusText.text = "Erro: Não foi possível abrir o stream do arquivo."
+                      }
+                  } catch (e: Exception) {
+                      statusText.text = "Erro ao ler ROM:\n\${e.message}"
+                      e.printStackTrace()
+                  }
+              }
+          }
+          EOF
+
+      # ------------------------------------------------------------------
+      # COMMIT E PUSH
+      # ------------------------------------------------------------------
+      - name: Commit Changes
+        run: |
+          git add .
           if git diff-index --quiet HEAD --; then
-             echo "Tudo já estava correto."
+             echo "Nenhuma mudança para comitar."
           else
-             git commit -m "Fix: Create missing icons and gradle.properties"
+             git commit -m "Refactor: Fix warnings & Add Load ROM Button UI"
              git push
           fi
