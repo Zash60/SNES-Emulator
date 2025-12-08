@@ -11,43 +11,42 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import java.io.InputStream
 
+// Imports do Core do Emulador
+import de.dde.snes.cartridge.Cartridge
+import de.dde.snes.SNES
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var statusText: TextView
+    
+    // Instância do emulador
+    private val snes = SNES()
 
-    // Configura o contrato moderno para abrir arquivos (Scoped Storage)
     private val loadRomLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
-            loadRom(uri)
-        } else {
-            Toast.makeText(this, "Nenhum arquivo selecionado", Toast.LENGTH_SHORT).show()
+            loadAndStartRom(uri)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Layout Simples criado via código (sem XML)
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(50, 50, 50, 50)
         }
 
-        // Botão Load ROM
         val btnLoad = Button(this).apply {
-            text = "LOAD ROM (SMC/SFC)"
+            text = "LOAD ROM & START"
             textSize = 18f
             setOnClickListener {
-                // Abre o seletor de arquivos
-                // Filtra por qualquer tipo para garantir que mostre as ROMs
                 loadRomLauncher.launch(arrayOf("*/*"))
             }
         }
 
-        // Texto de Status
         statusText = TextView(this).apply {
-            text = "SNES Core Initialized.\nSelect a ROM to load into memory."
+            text = "SNES Android Core Ready.\nWaiting for ROM..."
             textSize = 16f
             gravity = Gravity.CENTER
             setPadding(0, 50, 0, 0)
@@ -58,32 +57,47 @@ class MainActivity : AppCompatActivity() {
         setContentView(layout)
     }
 
-    private fun loadRom(uri: Uri) {
+    private fun loadAndStartRom(uri: Uri) {
         try {
             val contentResolver = applicationContext.contentResolver
-            
-            // Abre o arquivo usando Stream (Android não usa Paths de disco diretamente)
             val inputStream: InputStream? = contentResolver.openInputStream(uri)
             
             if (inputStream != null) {
-                // Lê os bytes para a memória (Simulando o carregamento do cartucho)
-                val bytes = inputStream.readBytes()
+                // 1. Ler bytes
+                val romBytes = inputStream.readBytes()
                 inputStream.close()
 
-                statusText.text = "SUCESSO!\nArquivo: $uri\nTamanho: ${bytes.size} bytes carregados na RAM.\n\n(Pronto para passar ao Emulator Core)"
+                statusText.text = "ROM Carregada: ${romBytes.size} bytes.\nInicializando Cartucho..."
                 
-                Toast.makeText(this, "ROM Carregada!", Toast.LENGTH_LONG).show()
+                // 2. Criar Cartucho (Agora aceita ByteArray graças ao script!)
+                val cartridge = Cartridge(romBytes)
                 
-                // TODO: Aqui você chamará o Core do emulador:
-                // val cartridge = Cartridge(bytes) 
-                // snes.insertCartridge(cartridge)
-                // snes.start()
+                // 3. Resetar e Inserir no Console
+                snes.reset()
+                snes.insertCartridge(cartridge)
+                
+                statusText.text = "Cartucho inserido!\nHeader: ${cartridge.header.name}\nIniciando CPU..."
+                
+                // 4. Iniciar Emulação (Em Thread separada para não travar UI)
+                Thread {
+                    try {
+                        // snes.reset() já foi chamado
+                        snes.start() 
+                    } catch (e: Exception) {
+                        runOnUiThread {
+                            statusText.text = "Crash no Emulador:\n${e.message}"
+                        }
+                        e.printStackTrace()
+                    }
+                }.start()
+                
+                Toast.makeText(this, "Emulação Iniciada!", Toast.LENGTH_SHORT).show()
                 
             } else {
-                statusText.text = "Erro: Não foi possível abrir o stream do arquivo."
+                statusText.text = "Erro: Stream nulo."
             }
         } catch (e: Exception) {
-            statusText.text = "Erro ao ler ROM:\n${e.message}"
+            statusText.text = "Erro Fatal:\n${e.message}"
             e.printStackTrace()
         }
     }

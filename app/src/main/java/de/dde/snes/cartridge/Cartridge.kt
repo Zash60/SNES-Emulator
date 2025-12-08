@@ -3,11 +3,9 @@ package de.dde.snes.cartridge
 import de.dde.snes.memory.Memory
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.file.Files
-import java.nio.file.Path
 
 class Cartridge(
-    val path: Path
+    val inputBytes: ByteArray
 ) {
     val smcHeaderData: ByteArray
     val data: ByteArray
@@ -15,7 +13,7 @@ class Cartridge(
     val header: CartridgeHeader
 
     init {
-        var b = Files.readAllBytes(path)
+        var b = inputBytes
 
         val smcHeader = when (b.size.rem(0x400)) {
             0 -> false
@@ -36,7 +34,7 @@ class Cartridge(
         val page = when {
             isLoRomUsed() -> LOROM_HEADER_PAGE
             isHiRomUsed() -> HIROM_HEADER_PAGE
-            else -> throw IllegalArgumentException("cartrtidge $path cannot be assigned to any MapMode")
+            else -> throw IllegalArgumentException("cartrtidge loaded rom cannot be assigned to any MapMode")
         }
 
         header = readHeader(page * Memory.PAGE_SIZE + HEADER_START_INDEX)
