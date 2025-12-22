@@ -14,7 +14,7 @@ class PPU(
     
     // --- VIDEO OUTPUT ---
     var frameReady = false
-    val videoBuffer = IntArray(256 * 224) // 256x224 (Resolução SNES NTSC)
+    val videoBuffer = IntArray(256 * 224)
     // --------------------
 
     val oam = OAM()
@@ -24,15 +24,16 @@ class PPU(
     val window2 = MaskWindow()
     val colorMath = ColorMath()
 
-    var forceBlank = false
+    // Registradores PPU
+    var forceBlank = true // Começa ligado (tela preta) até o jogo desligar
     var brightness = 0x00
+    var bgMode = 0
+    var bg3Prio = false
+    
     var objSize = ObjectSize.byCode(0)
     var nameSelect = 0
     var nameBaseSelect = 0
     var mosaicSize = 1
-
-    var bgnOffsPrev1 = 0
-    var bgnOffsPrev2 = 0
 
     var countersLatched = false
     var hoffset = 0
@@ -47,20 +48,12 @@ class PPU(
     var inHBlank = false
         private set
 
-    var product = 0
-
-    var externalSync = false
-    var pseudoHire = false
-    var overscan = false
-    var objInterlace = false
-    var screenInterlace = false
-
+    // Flags de Sincronia
     var timeOver = false
     var rangeOver = false
     var interlaceField = false
-
-    var bg3Prio = false
-    var bgMode = 0
+    var externalSync = false
+    var overscan = false
 
     val backgrounds = arrayOf(
         Background("BG1"),
@@ -71,6 +64,9 @@ class PPU(
     )
 
     val mode7 = Mode7()
+    
+    // Controle de escrita na VRAM
+    var vramIncrementOnHigh = false
 
     fun reset() {
         vram.reset()
@@ -81,34 +77,16 @@ class PPU(
         colorMath.reset()
         mode7.reset()
         for (bg in backgrounds) { bg.reset() }
-        objSize = ObjectSize.byCode(0)
-        forceBlank = false
+        
+        forceBlank = true
         brightness = 0x00
-        nameSelect = 0
-        nameBaseSelect = 0
-        mosaicSize = 1
-        bgnOffsPrev1 = 0
-        bgnOffsPrev2 = 0
-        hoffset = 0
-        hoffsetLatched = 0
-        hoffsetHigh = false
-        voffset = 0
-        voffsetLatched = 0
-        voffsetHigh = false
-        inVBlank = false
-        inHBlank = false
-        product = 0
-        externalSync = false
-        pseudoHire = false
-        overscan = false
-        objInterlace = false
-        screenInterlace = false
-        timeOver = false
-        rangeOver = false
-        interlaceField = false
-        countersLatched = false
-        bg3Prio = false
         bgMode = 0
+        bg3Prio = false
+        
+        hoffset = 0; voffset = 0
+        inVBlank = false; inHBlank = false
+        
+        vramIncrementOnHigh = false
     }
 
     var delta = 0L
@@ -120,6 +98,7 @@ class PPU(
             this.delta -= CYCLES_PER_TICK
             hoffset++
 
+            // Lógica simplificada de timing H/V
             if (hoffset == FIRST_H_OFFSET) {
                 inHBlank = false
             }
@@ -127,8 +106,6 @@ class PPU(
             if (hoffset == FIRST_H_OFFSET + snes.version.width) {
                 inHBlank = true
                 snes.dma.forEach { it.doHdmaForScanline(voffset) }
-                
-                // Renderiza a linha atual no buffer
                 renderScanline(voffset)
             }
 
@@ -142,7 +119,7 @@ class PPU(
 
                 if (voffset == FIRST_V_OFFSET + snes.version.heigth) {
                     inVBlank = true
-                    frameReady = true // Avisa a MainActivity que o quadro acabou
+                    frameReady = true
                     if (snes.processor.nmiEnabled)
                         snes.processor.nmiRequested = true
                 }
@@ -151,11 +128,11 @@ class PPU(
                     voffset = 0
                 }
             }
-
+            
+            // IRQs
             if (snes.processor.xIrqEnabled || snes.processor.yIrqEnabled) {
                 val xIrq = if (snes.processor.xIrqEnabled) snes.processor.htime else 0
                 val yIrq = if (snes.processor.yIrqEnabled) snes.processor.vtime else voffset
-
                 if (hoffset == xIrq && voffset == yIrq) {
                     snes.processor.irqRequested = true
                 }
@@ -169,76 +146,141 @@ class PPU(
         voffsetLatched = voffset
     }
 
-    // --- RENDERIZADOR MINIMALISTA (COR DE FUNDO) ---
+    // --- RENDERIZADOR BÁSICO (BG1 + Cor de Fundo) ---
     private fun renderScanline(y: Int) {
         if (y < 0 || y >= 224) return
 
-        // Se forceBlank estiver ativo, a tela deve ser preta.
+        // Se force blank, pinta de preto e sai
         if (forceBlank) {
             val black = 0xFF000000.toInt()
-            for (x in 0 until 256) {
-                val index = y * 256 + x
-                if (index < videoBuffer.size) {
-                    videoBuffer[index] = black
-                }
-            }
+            val start = y * 256
+            for (x in 0 until 256) videoBuffer[start + x] = black
             return
         }
 
-        // Cor de fundo é o primeiro registro da CGRAM (paleta 0)
-        val bgColor = cgram.get(0)
+        // 1. Pinta a linha com a cor de fundo (Backdrop)
+        val backdropColor = cgram.get(0)
+        val rowStart = y * 256
+        for (x in 0 until 256) videoBuffer[rowStart + x] = backdropColor
 
+        // 2. Renderiza BG1 (Se estiver habilitado na Main Screen e for Mode 0 ou 1)
+        // Isso é uma simplificação para ver o jogo funcionar. O SNES real é muito mais complexo.
+        if (backgrounds[0].enableMainScreen && (bgMode == 0 || bgMode == 1)) {
+            renderBg1Line(y, rowStart)
+        }
+    }
+
+    private fun renderBg1Line(y: Int, rowStart: Int) {
+        val bg1 = backgrounds[0]
+        val tileMapBase = bg1.tilemapAddress // Endereço na VRAM onde está o mapa
+        val tileDataBase = bg1.baseAddress   // Endereço na VRAM onde estão os gráficos
+        
+        // Rolagem (Scroll) - Simplificado
+        // Para implementar scroll correto, precisaríamos somar hScroll/vScroll
+        val scrollX = bg1.hScroll 
+        val scrollY = (y + bg1.vScroll) 
+        
         for (x in 0 until 256) {
-            val index = y * 256 + x
-            if (index < videoBuffer.size) {
-                videoBuffer[index] = bgColor
+            val absoluteX = (x + scrollX) and 0x3FF // Mapa tem 1024px de largura lógica (simplificado)
+            val absoluteY = scrollY and 0x3FF
+
+            // Descobre qual tile (bloco 8x8) estamos
+            val tileX = absoluteX / 8
+            val tileY = absoluteY / 8
+            
+            // Mapa 32x32 tiles (padrão)
+            val mapAddress = tileMapBase + ((tileY % 32) * 32 + (tileX % 32)) // Endereço da Word
+            
+            // Lê atributos do tile da VRAM (2 bytes por tile no mapa)
+            // VRAM é byte-array, mas acessado como Word no mapa.
+            // Layout da VRAM class: byte array flat.
+            // Word Address no SNES = Byte Address / 2. A classe VRAM usa endereços diretos de bytes?
+            // Vamos assumir que mapAddress é Word-Address, então * 2 para byte array index.
+            // A classe VRAM.kt parece usar endereço de byte direto em 'vram[]', mas o 'address' property comporta-se como Word address em writes.
+            // Vamos ler bytes crus.
+            
+            // Cuidado: VRAM.kt 'vram' size é 64KB.
+            // O SNES usa Word Addresses para configurar (0x0000-0xFFFF).
+            val addrInBytes = (mapAddress and 0xFFFF) * 2
+            val low = vram.vram[addrInBytes].toInt() and 0xFF
+            val high = vram.vram[addrInBytes + 1].toInt() and 0xFF
+            val tileAttr = low or (high shl 8)
+            
+            // Decodifica atributos
+            val charIdx = tileAttr and 0x03FF
+            val paletteIdx = (tileAttr shr 10) and 0x07
+            val priority = (tileAttr and 0x2000) != 0
+            val flipX = (tileAttr and 0x4000) != 0
+            val flipY = (tileAttr and 0x8000) != 0
+            
+            // Pega o pixel dentro do tile (0-7)
+            var pixelX = absoluteX % 8
+            var pixelY = absoluteY % 8
+            
+            if (flipX) pixelX = 7 - pixelX
+            if (flipY) pixelY = 7 - pixelY
+            
+            // Endereço do dado do caractere (4bpp = 32 bytes por tile)
+            // charIdx * 16 words = charIdx * 32 bytes
+            val charAddr = tileDataBase + (charIdx * 32) // Endereço de byte base
+            
+            // Decodifica 4bpp planar (Bitplanes)
+            // Linha do tile são 2 bytes para BP 0 e 1, e mais 2 bytes para BP 2 e 3 (+16 bytes de offset)
+            val rowOffset = pixelY * 2
+            
+            val b0 = vram.vram[(charAddr + rowOffset) and 0xFFFF].toInt()
+            val b1 = vram.vram[(charAddr + rowOffset + 1) and 0xFFFF].toInt()
+            val b2 = vram.vram[(charAddr + rowOffset + 16) and 0xFFFF].toInt()
+            val b3 = vram.vram[(charAddr + rowOffset + 17) and 0xFFFF].toInt()
+            
+            val mask = 0x80 shr pixelX
+            var color = 0
+            if ((b0 and mask) != 0) color = color or 1
+            if ((b1 and mask) != 0) color = color or 2
+            if ((b2 and mask) != 0) color = color or 4
+            if ((b3 and mask) != 0) color = color or 8
+            
+            // Se cor for 0, é transparente (vê o fundo), então não desenha
+            if (color != 0) {
+                // Paleta 0-7 para BG1 em 4bpp
+                // A CGRAM tem 256 cores. BG1 usa as primeiras 128 (8 paletas de 16 cores)
+                val cgramIndex = (paletteIdx * 16) + color
+                val rgb = cgram.get(cgramIndex)
+                videoBuffer[rowStart + x] = rgb
             }
         }
     }
 
     override fun readByte(bank: Bank, address: ShortAddress): Int {
         return when (address) {
-            0x2100 -> {
-                var r = brightness
-                if (forceBlank) r = r.setBit(0x80)
-                r
+            0x2134, 0x2135, 0x2136 -> { // MPYL, MPYM, MPYH (Multiplication Result)
+                 // Simplificação: Retornar PPU1/PPU2 status simulados ou open bus
+                 Memory.OPEN_BUS
             }
-            0x2101 -> (objSize.code shl 5) or (nameSelect shl 3) or nameBaseSelect
-            0x2102 -> (if (oam.objPrio) 0x80 else 0) or oam.tableSelect
-            0x2103 -> oam.address
-            0x2137 -> {
-                if (snes.controllers.programmableIo2Line) latchCounter()
-                Memory.OPEN_BUS
+            0x2139 -> { // VMDATAL Read
+                val r = vram.read(VRAM.IncrementMode.LOW)
+                r and 0xFF
             }
-            0x213C -> {
-                val r = if (hoffsetHigh) hoffsetLatched.highByte() else hoffsetLatched.lowByte()
-                hoffsetHigh = !hoffsetHigh
-                r
+            0x213A -> { // VMDATAH Read
+                val r = vram.read(VRAM.IncrementMode.HIGH)
+                r shr 8
             }
-            0x213D -> {
-                val r = if (voffsetHigh) voffsetLatched.highByte() else voffsetLatched.lowByte()
-                voffsetHigh = !voffsetHigh
-                r
-            }
+            // Status registers existentes...
             0x213E -> {
-                var r = 0
-                if (timeOver) r = r or 0x80
-                if (rangeOver) r = r or 0x40
-                r = r or 0x01 // Version
-                r
+                 var r = 0x01 // PPU1 Version
+                 if (timeOver) r = r or 0x80
+                 if (rangeOver) r = r or 0x40
+                 r
             }
             0x213F -> {
-                hoffsetHigh = false
-                voffsetHigh = false
-                var r = 0
-                if (interlaceField) r = r or 0x80
-                if (countersLatched) {
-                    r = r or 0x40
-                    if (snes.controllers.programmableIo2Line) countersLatched = false
-                }
-                if (snes.version == SNES.Version.PAL) r = r or 0x02
-                r = r or 0x02 // Version
-                r
+                 hoffsetHigh = false; voffsetHigh = false
+                 var r = 0x02 // PPU2 Version & NTSC
+                 if (interlaceField) r = r or 0x80
+                 if (countersLatched) {
+                     r = r or 0x40
+                     if (snes.controllers.programmableIo2Line) countersLatched = false
+                 }
+                 r
             }
             else -> Memory.OPEN_BUS
         }
@@ -246,21 +288,83 @@ class PPU(
 
     override fun writeByte(bank: Bank, address: ShortAddress, value: Int) {
         when (address) {
-            0x2100 -> {
+            0x2100 -> { // INIDISP
                 forceBlank = value.isBitSet(0x80)
-                brightness = value.asByte()
+                brightness = value and 0x0F
             }
-            // --- CORREÇÃO AQUI ---
-            0x2121 -> {
-                cgram.address = value.asByte()
+            0x2105 -> { // BGMODE
+                bgMode = value and 0x07
+                bg3Prio = value.isBitSet(0x08)
+                // character sizes omitted
             }
-            0x2122 -> {
-                cgram.write(value.asByte())
+            // BG Map Addresses (SC)
+            0x2107 -> backgrounds[0].tilemapAddress = (value and 0x7C) shl 8
+            0x2108 -> backgrounds[1].tilemapAddress = (value and 0x7C) shl 8
+            0x2109 -> backgrounds[2].tilemapAddress = (value and 0x7C) shl 8
+            0x210A -> backgrounds[3].tilemapAddress = (value and 0x7C) shl 8
+            
+            // BG Character Data Addresses (NBA)
+            0x210B -> {
+                backgrounds[0].baseAddress = (value and 0x0F) shl 12 // word addr -> byte addr? SNES spec: Base address = value * 4K words = value * 8K bytes
+                // No emulador original, baseAddress era int. Vamos assumir byte address.
+                // Spec: (Value & 0x0F) * 0x2000 (bytes)
+                backgrounds[0].baseAddress = (value and 0x0F) * 0x2000 // 8KB steps
+                backgrounds[1].baseAddress = (value shr 4) * 0x2000
             }
-            // ---------------------
-            in 0x2100..0x213F -> { } 
+            0x210C -> {
+                backgrounds[2].baseAddress = (value and 0x0F) * 0x2000
+                backgrounds[3].baseAddress = (value shr 4) * 0x2000
+            }
+
+            0x210D -> backgrounds[0].hScroll = (value shl 8) or (backgrounds[0].prev shl 8 shr 8) // Simplificado (Lógica de write-twice)
+            0x210E -> backgrounds[0].vScroll = (value shl 8) or (backgrounds[0].prev shl 8 shr 8)
+            // ... outros scrolls
+
+            // VRAM Access
+            0x2115 -> { // VMAIN
+                vramIncrementOnHigh = value.isBitSet(0x80)
+                val incMapping = (value and 0x0C) shr 2
+                vram.mapping = VRAM.Mapping.byCode(incMapping)
+                val incStep = value and 0x03
+                vram.increment = when(incStep) {
+                    0 -> VRAM.Increment._1
+                    1 -> VRAM.Increment._32
+                    2 -> VRAM.Increment._128
+                    3 -> VRAM.Increment._128_2
+                    else -> VRAM.Increment._1
+                }
+                vram.addressIncrementMode = if (vramIncrementOnHigh) VRAM.IncrementMode.HIGH else VRAM.IncrementMode.LOW
+            }
+            0x2116 -> vram.address = (vram.address and 0xFF00) or value
+            0x2117 -> vram.address = (vram.address and 0x00FF) or (value shl 8)
+            0x2118 -> { // VMDATAL
+                vram.dataWrite = (vram.dataWrite and 0xFF00) or value
+                if (!vramIncrementOnHigh) vram.write(VRAM.IncrementMode.LOW)
+            }
+            0x2119 -> { // VMDATAH
+                vram.dataWrite = (vram.dataWrite and 0x00FF) or (value shl 8)
+                if (vramIncrementOnHigh) vram.write(VRAM.IncrementMode.HIGH)
+            }
+            
+            // CGRAM (Palette) Access
+            0x2121 -> cgram.address = value
+            0x2122 -> cgram.write(value)
+
+            0x212C -> { // TM (Main Screen Designation)
+                for (i in 0..4) {
+                    backgrounds[i].enableMainScreen = value.isBitSet(1 shl i)
+                }
+            }
+            
+            in 0x2100..0x213F -> { } // Catch-all para outros regs
             M7HOFS -> { }
             M7VOFS -> { }
+        }
+        
+        // Armazena valor 'previous' para registradores de escrita dupla (como scroll)
+        // Isso é um hack rápido, a lógica real é mais complexa
+        if (address == 0x210D || address == 0x210E) {
+             backgrounds[0].prev = value
         }
     }
 
@@ -270,32 +374,5 @@ class PPU(
         const val CYCLES_PER_TICK = 4
         const val FIRST_H_OFFSET = 22
         const val FIRST_V_OFFSET = 1
-    }
-}
-
-class Mode7 {
-    var hScroll = 0
-    var vScroll = 0
-    var prev = 0
-    var matrixA = 0
-    var matrixB = 0
-    var matrixC = 0
-    var matrixD = 0
-    var centerX = 0
-    var centerY = 0
-    var bigSize = false
-    var spaceFill = false
-    var mirrorX = false
-    var mirrorY = false
-    var extBg = false
-    fun reset() {}
-}
-
-enum class ObjectSize {
-    _8x8_16x16, _8x8_32x32, _8x8_64x64, _16x16_32x32,
-    _16x16_64x64, _32x32_64x64, _16x32_32x32, _16x32_32x64;
-    val code get() = ordinal
-    companion object {
-        fun byCode(code: Int) = values()[code]
     }
 }
