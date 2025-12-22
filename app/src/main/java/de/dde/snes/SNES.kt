@@ -15,7 +15,8 @@ class SNES {
     val ppu = PPU(this)
     val controllers = Controllers(this)
 
-    var version = Version.PAL
+    // Alterado para NTSC para bater com a resolução do EmulatorView (256x224)
+    var version = Version.NTSC
 
     var cartridge: Cartridge? = null
         private set
