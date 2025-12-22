@@ -169,36 +169,32 @@ class PPU(
         voffsetLatched = voffset
     }
 
-// --- RENDERIZADOR MINIMALISTA (COR DE FUNDO) ---
-// Garante que a tela não fique preta se o emulador estiver rodando e o PPU estiver ativo.
-private fun renderScanline(y: Int) {
-    if (y < 0 || y >= 224) return
+    // --- RENDERIZADOR MINIMALISTA (COR DE FUNDO) ---
+    private fun renderScanline(y: Int) {
+        if (y < 0 || y >= 224) return
 
-    // Se forceBlank estiver ativo, a tela deve ser preta.
-    if (forceBlank) {
-        val black = 0xFF000000.toInt()
+        // Se forceBlank estiver ativo, a tela deve ser preta.
+        if (forceBlank) {
+            val black = 0xFF000000.toInt()
+            for (x in 0 until 256) {
+                val index = y * 256 + x
+                if (index < videoBuffer.size) {
+                    videoBuffer[index] = black
+                }
+            }
+            return
+        }
+
+        // Cor de fundo é o primeiro registro da CGRAM (paleta 0)
+        val bgColor = cgram.get(0)
+
         for (x in 0 until 256) {
             val index = y * 256 + x
             if (index < videoBuffer.size) {
-                videoBuffer[index] = black
+                videoBuffer[index] = bgColor
             }
         }
-        return
     }
-
-    // Cor de fundo é o primeiro registro da CGRAM (paleta 0)
-    // O valor é um Int (ARGB) já convertido de 15-bit SNES para 32-bit Android.
-    val bgColor = cgram.get(0)
-
-    for (x in 0 until 256) {
-        val index = y * 256 + x
-        if (index < videoBuffer.size) {
-            // Renderização minimalista: apenas a cor de fundo.
-            // A lógica completa de BG/OBJ/Color Math deve ser implementada aqui.
-            videoBuffer[index] = bgColor
-        }
-    }
-}
 
     override fun readByte(bank: Bank, address: ShortAddress): Int {
         return when (address) {
@@ -222,7 +218,7 @@ private fun renderScanline(y: Int) {
             0x213D -> {
                 val r = if (voffsetHigh) voffsetLatched.highByte() else voffsetLatched.lowByte()
                 voffsetHigh = !voffsetHigh
-                r // Retirado o sinal negativo que estava no original (provavel bug) ou mantemos conforme necessidade
+                r
             }
             0x213E -> {
                 var r = 0
@@ -244,8 +240,6 @@ private fun renderScanline(y: Int) {
                 r = r or 0x02 // Version
                 r
             }
-            // Implementação simplificada para compilar. 
-            // O HardwareMapping chama isso, então deve retornar algo válido ou OpenBus.
             else -> Memory.OPEN_BUS
         }
     }
@@ -256,8 +250,14 @@ private fun renderScanline(y: Int) {
                 forceBlank = value.isBitSet(0x80)
                 brightness = value.asByte()
             }
-            // Adicione outros registradores conforme necessário
-            // Mantemos o when limpo para evitar erros de sintaxe no cat
+            // --- CORREÇÃO AQUI ---
+            0x2121 -> {
+                cgram.address = value.asByte()
+            }
+            0x2122 -> {
+                cgram.write(value.asByte())
+            }
+            // ---------------------
             in 0x2100..0x213F -> { } 
             M7HOFS -> { }
             M7VOFS -> { }
@@ -273,7 +273,6 @@ private fun renderScanline(y: Int) {
     }
 }
 
-// Classes auxiliares (No mesmo arquivo conforme original)
 class Mode7 {
     var hScroll = 0
     var vScroll = 0
@@ -294,7 +293,7 @@ class Mode7 {
 
 enum class ObjectSize {
     _8x8_16x16, _8x8_32x32, _8x8_64x64, _16x16_32x32,
-    _16x16_64x64, _32x32_64x64, _16x32_32x64, _16x32_32x32;
+    _16x16_64x64, _32x32_64x64, _16x32_32x32, _16x32_32x64;
     val code get() = ordinal
     companion object {
         fun byCode(code: Int) = values()[code]
