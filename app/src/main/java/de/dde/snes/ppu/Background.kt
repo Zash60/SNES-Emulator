@@ -21,6 +21,10 @@ class Background(val name: String) {
     var baseAddress = 0 // the correct address is 0xthis000
     var hScroll = 0
     var vScroll = 0
+    
+    // --- CORREÇÃO: Variável adicionada para controle de latch de escrita ---
+    var prev = 0 
+    // ----------------------------------------------------------------------
 
     var enableColorMath = false
 
@@ -47,6 +51,8 @@ class Background(val name: String) {
         baseAddress = 0
         hScroll = 0
         vScroll = 0
+        
+        prev = 0
 
         enableColorMath = false
         bigSize = false
