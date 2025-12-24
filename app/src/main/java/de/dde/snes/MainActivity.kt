@@ -72,34 +72,53 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadAndStartRom(uri: Uri) {
-        try {
-            isEmulationRunning = false
-            Thread.sleep(100) 
+        // Usamos uma Thread separada para ler o arquivo pesado (I/O) para não travar a UI
+        Thread {
+            try {
+                isEmulationRunning = false
+                Thread.sleep(100) 
 
-            val contentResolver = applicationContext.contentResolver
-            val inputStream: InputStream? = contentResolver.openInputStream(uri)
-            
-            if (inputStream != null) {
-                val romBytes = inputStream.readBytes()
-                inputStream.close()
+                val contentResolver = applicationContext.contentResolver
+                val inputStream: InputStream? = contentResolver.openInputStream(uri)
+                
+                if (inputStream != null) {
+                    // Isso pode demorar para ROMs grandes, por isso está aqui
+                    val romBytes = inputStream.readBytes()
+                    inputStream.close()
 
-                // Cria o cartucho e reseta o console
-                val cartridge = Cartridge(romBytes)
-                snes.reset()
-                snes.insertCartridge(cartridge)
-                // Reset novamente após inserir o cartucho para garantir vetores corretos
-                snes.reset()
-                
-                statusText.text = "Rodando: ${cartridge.header.name}"
-                btnLoad.visibility = View.GONE
-                
-                isEmulationRunning = true
-                startEmulationLoop()
+                    // Volta para a Thread Principal para inicializar o SNES
+                    runOnUiThread {
+                        try {
+                            val cartridge = Cartridge(romBytes)
+                            
+                            // Debug: Verificar se o Header foi lido
+                            println("ROM Carregada: ${cartridge.header.name}, MapMode: ${cartridge.header.mapMode}")
+                            
+                            snes.reset()
+                            snes.insertCartridge(cartridge)
+                            // Reset novamente após inserir o cartucho para garantir vetores corretos
+                            snes.reset()
+                            
+                            statusText.text = "Rodando: ${cartridge.header.name}"
+                            btnLoad.visibility = View.GONE
+                            
+                            isEmulationRunning = true
+                            startEmulationLoop()
+                        } catch (e: Exception) {
+                            statusText.text = "Erro Init: ${e.message}"
+                            e.printStackTrace()
+                            btnLoad.visibility = View.VISIBLE
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    statusText.text = "Erro Leitura: ${e.message}"
+                    e.printStackTrace()
+                    btnLoad.visibility = View.VISIBLE
+                }
             }
-        } catch (e: Exception) {
-            statusText.text = "Erro: ${e.message}"
-            e.printStackTrace()
-        }
+        }.start()
     }
 
     private fun startEmulationLoop() {
@@ -127,9 +146,12 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     // --- FIM DO QUADRO ---
-                    // Se chegamos aqui, o PPU terminou de desenhar a tela (V-Blank)
+                    // Se chegamos aqui, o PPU terminou de desenhar a tela (VBlank)
                     
                     if (isEmulationRunning) {
+                        // IMPORTANTE: Troca os buffers para exibir o que foi desenhado
+                        snes.ppu.swapBuffers()
+                        
                         // Copia o buffer de vídeo para a UI
                         val pixels = snes.ppu.videoBuffer
                         
@@ -140,7 +162,6 @@ class MainActivity : AppCompatActivity() {
                         }
                         
                         // Limitador de velocidade simples (60 FPS)
-                        // O ideal seria contar o tempo real, mas sleep(16) resolve por agora.
                         Thread.sleep(16)
                     }
                 }
