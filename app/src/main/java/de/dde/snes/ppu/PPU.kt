@@ -14,7 +14,13 @@ class PPU(
     
     // --- VIDEO OUTPUT ---
     var frameReady = false
+    
+    // Buffer que a Activity lê (tela visível)
     val videoBuffer = IntArray(256 * 224)
+    
+    // Buffer onde a PPU desenha (buffer de trabalho)
+    // Usamos dois buffers para evitar flickering (Double Buffering)
+    val renderBuffer = IntArray(256 * 224)
     // --------------------
 
     val oam = OAM()
@@ -68,6 +74,12 @@ class PPU(
     // Controle de escrita na VRAM
     var vramIncrementOnHigh = false
 
+    // Método chamado ao final de cada quadro (VBlank) para exibir a imagem
+    fun swapBuffers() {
+        // Copia o renderBuffer (pronto) para o videoBuffer (visualização)
+        System.arraycopy(renderBuffer, 0, videoBuffer, 0, videoBuffer.size)
+    }
+
     fun reset() {
         vram.reset()
         oam.reset()
@@ -87,6 +99,10 @@ class PPU(
         inVBlank = false; inHBlank = false
         
         vramIncrementOnHigh = false
+        
+        // Limpa os buffers na inicialização
+        videoBuffer.fill(0xFF000000.toInt())
+        renderBuffer.fill(0xFF000000.toInt())
     }
 
     var delta = 0L
@@ -150,18 +166,19 @@ class PPU(
     private fun renderScanline(y: Int) {
         if (y < 0 || y >= 224) return
 
+        val rowStart = y * 256
+
         // Se force blank, pinta de preto e sai
         if (forceBlank) {
             val black = 0xFF000000.toInt()
-            val start = y * 256
-            for (x in 0 until 256) videoBuffer[start + x] = black
+            // Escreve no renderBuffer, não no videoBuffer diretamente
+            for (x in 0 until 256) renderBuffer[rowStart + x] = black
             return
         }
 
         // 1. Pinta a linha com a cor de fundo (Backdrop)
         val backdropColor = cgram.get(0)
-        val rowStart = y * 256
-        for (x in 0 until 256) videoBuffer[rowStart + x] = backdropColor
+        for (x in 0 until 256) renderBuffer[rowStart + x] = backdropColor
 
         // 2. Renderiza BG1 (Se estiver habilitado na Main Screen e for Mode 0 ou 1)
         if (backgrounds[0].enableMainScreen && (bgMode == 0 || bgMode == 1)) {
@@ -232,7 +249,8 @@ class PPU(
                 // BG1 usa as primeiras 128 cores (8 paletas de 16 cores)
                 val cgramIndex = (paletteIdx * 16) + color
                 val rgb = cgram.get(cgramIndex)
-                videoBuffer[rowStart + x] = rgb
+                // Escreve no renderBuffer
+                renderBuffer[rowStart + x] = rgb
             }
         }
     }
