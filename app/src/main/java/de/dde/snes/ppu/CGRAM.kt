@@ -33,7 +33,7 @@ class CGRAM {
             
             // Cores 16-255: Tons de cinza e cores adicionais
             // Gerar tons de cinza
-            *Array(240) { i -> 
+            *IntArray(240) { i ->
                 val gray = ((i * 255) / 239).coerceIn(0, 255)
                 (gray shl 16) or (gray shl 8) or gray
             }

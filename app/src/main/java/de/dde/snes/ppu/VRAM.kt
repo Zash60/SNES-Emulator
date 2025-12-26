@@ -34,25 +34,25 @@ class VRAM {
         // 4bpp planar format: 32 bytes por tile (8 linhas x 4 bytes por linha)
         val tileData = byteArrayOf(
             // Linha 0: pixels pretos
-            0x00, 0x00,
+            0x00.toByte(), 0x00.toByte(),
             // Linha 1: borda preta
-            0xFF, 0x00,
+            0xFF.toByte(), 0x00.toByte(),
             // Linha 2: centro branco
-            0x00, 0xFF,
+            0x00.toByte(), 0xFF.toByte(),
             // Linha 3: borda preta
-            0xFF, 0x00,
+            0xFF.toByte(), 0x00.toByte(),
             // Linha 4: centro branco
-            0x00, 0xFF,
+            0x00.toByte(), 0xFF.toByte(),
             // Linha 5: borda preta
-            0xFF, 0x00,
+            0xFF.toByte(), 0x00.toByte(),
             // Linha 6: centro branco
-            0x00, 0xFF,
+            0x00.toByte(), 0xFF.toByte(),
             // Linha 7: borda preta
-            0xFF, 0x00,
-            
+            0xFF.toByte(), 0x00.toByte(),
+
             // Bytes altos (bit planes 2 e 3) - todos zeros para cores simples
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+            0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(),
+            0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte()
         )
         
         // Copiar para o início da VRAM (tile 0)
