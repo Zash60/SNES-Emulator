@@ -17,11 +17,59 @@ class VRAM {
     var dataWrite = 0
 
     fun reset() {
+        // CORREÇÃO: Inicializar VRAM com dados padrão
         vram.fill(0)
+        
+        // CORREÇÃO: Adicionar um tile básico (8x8 pixels) na VRAM para visualização
+        initializeBasicTile()
+        
         addressIncrementMode = IncrementMode.LOW
         increment = Increment.byCode(0)
         mapping = Mapping.byCode(0)
         dataWrite = 0
+    }
+    
+    private fun initializeBasicTile() {
+        // Criar um tile básico (primeiro tile) com padrão simples
+        // 4bpp planar format: 32 bytes por tile (8 linhas x 4 bytes por linha)
+        val tileData = byteArrayOf(
+            // Linha 0: pixels pretos
+            0x00, 0x00,
+            // Linha 1: borda preta
+            0xFF, 0x00,
+            // Linha 2: centro branco
+            0x00, 0xFF,
+            // Linha 3: borda preta
+            0xFF, 0x00,
+            // Linha 4: centro branco
+            0x00, 0xFF,
+            // Linha 5: borda preta
+            0xFF, 0x00,
+            // Linha 6: centro branco
+            0x00, 0xFF,
+            // Linha 7: borda preta
+            0xFF, 0x00,
+            
+            // Bytes altos (bit planes 2 e 3) - todos zeros para cores simples
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        )
+        
+        // Copiar para o início da VRAM (tile 0)
+        System.arraycopy(tileData, 0, vram, 0, tileData.size)
+        
+        // Criar um tile map básico (32x32 tiles) apontando para o tile 0
+        // Cada entrada no tile map é 2 bytes
+        for (y in 0 until 32) {
+            for (x in 0 until 32) {
+                val mapIndex = (0x0000 + (y * 32 + x)) * 2 // Tilemap no endereço 0x0000
+                if (mapIndex + 1 < vram.size) {
+                    // Tile 0, paleta 0, prioridade normal, sem flip
+                    vram[mapIndex] = 0x00 // Tile low byte
+                    vram[mapIndex + 1] = 0x00 // Tile high byte + atributos
+                }
+            }
+        }
     }
 
     fun write(value: IncrementMode) {

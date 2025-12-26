@@ -99,6 +99,12 @@ class MainActivity : AppCompatActivity() {
                             // Reset novamente após inserir o cartucho para garantir vetores corretos
                             snes.reset()
                             
+                            // Debug: Imprimir informações do estado inicial
+                            println("PPU Reset - forceBlank: ${snes.ppu.forceBlank}, bgMode: ${snes.ppu.bgMode}")
+                            println("BG1 enabled: ${snes.ppu.backgrounds[0].enableMainScreen}")
+                            println("VRAM initialized: ${snes.ppu.vram.vram[0]}")
+                            println("CGRAM initialized: ${snes.ppu.cgram.get(0).toString(16)}")
+                            
                             statusText.text = "Rodando: ${cartridge.header.name}"
                             btnLoad.visibility = View.GONE
                             

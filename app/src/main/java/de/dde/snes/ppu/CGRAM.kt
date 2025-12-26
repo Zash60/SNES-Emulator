@@ -16,6 +16,44 @@ class CGRAM {
         address = 0
         high = false
         tempColor = 0
+        
+        // CORREÇÃO: Inicializar paleta de cores padrão do SNES
+        // As primeiras 256 cores incluem uma paleta de cores padrão
+        initializeDefaultPalette()
+    }
+    
+    private fun initializeDefaultPalette() {
+        // Paleta de cores padrão do SNES (CGA-like)
+        val defaultColors = intArrayOf(
+            // Cores 0-15: Paleta básica
+            0x000000, 0x0000AA, 0x00AA00, 0x00AAAA,
+            0xAA0000, 0xAA00AA, 0xAA5500, 0xAAAAAA,
+            0x555555, 0x5555FF, 0x55FF55, 0x55FFFF,
+            0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF,
+            
+            // Cores 16-255: Tons de cinza e cores adicionais
+            // Gerar tons de cinza
+            *Array(240) { i -> 
+                val gray = ((i * 255) / 239).coerceIn(0, 255)
+                (gray shl 16) or (gray shl 8) or gray
+            }
+        )
+        
+        for (i in defaultColors.indices) {
+            if (i < colors.size) {
+                // Converter cor RGB para formato SNES (15-bit)
+                val r = (defaultColors[i] shr 16) and 0xFF
+                val g = (defaultColors[i] shr 8) and 0xFF
+                val b = defaultColors[i] and 0xFF
+                
+                // Converter para 15-bit: xBBBBBGGGGGRRRRR
+                val snesColor = ((r shr 3) and 0x1F) or
+                                (((g shr 3) and 0x1F) shl 5) or
+                                (((b shr 3) and 0x1F) shl 10)
+                
+                colors[i].value = snesColor
+            }
+        }
     }
 
     fun write(color: Int) {

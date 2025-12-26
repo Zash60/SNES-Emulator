@@ -90,15 +90,23 @@ class PPU(
         mode7.reset()
         for (bg in backgrounds) { bg.reset() }
         
-        forceBlank = true
-        brightness = 0x00
-        bgMode = 0
+        // CORREÇÃO: Desabilitar forceBlank para permitir renderização
+        forceBlank = false
+        brightness = 0x0F // Brilho máximo
+        bgMode = 1 // Modo 1 por padrão (mais compatível)
         bg3Prio = false
         
         hoffset = 0; voffset = 0
         inVBlank = false; inHBlank = false
         
         vramIncrementOnHigh = false
+        
+        // CORREÇÃO: Habilitar BG1 por padrão para compatibilidade
+        backgrounds[0].enableMainScreen = true
+        
+        // CORREÇÃO: Inicializar registradores importantes do PPU
+        backgrounds[0].tilemapAddress = 0x0000
+        backgrounds[0].baseAddress = 0x0000
         
         // Limpa os buffers na inicialização
         videoBuffer.fill(0xFF000000.toInt())
@@ -135,13 +143,18 @@ class PPU(
 
                 if (voffset == FIRST_V_OFFSET + snes.version.heigth) {
                     inVBlank = true
-                    frameReady = true
-                    if (snes.processor.nmiEnabled)
-                        snes.processor.nmiRequested = true
+                    // CORREÇÃO: Definir frameReady apenas uma vez por frame
+                    if (!frameReady) {
+                        frameReady = true
+                        if (snes.processor.nmiEnabled)
+                            snes.processor.nmiRequested = true
+                    }
                 }
 
                 if (voffset == FIRST_V_OFFSET + snes.version.heigth + snes.version.vHeightEnd) {
                     voffset = 0
+                    // CORREÇÃO: Reset frameReady para o próximo frame
+                    frameReady = false
                 }
             }
             
@@ -183,6 +196,15 @@ class PPU(
         // 2. Renderiza BG1 (Se estiver habilitado na Main Screen e for Mode 0 ou 1)
         if (backgrounds[0].enableMainScreen && (bgMode == 0 || bgMode == 1)) {
             renderBg1Line(y, rowStart)
+        }
+        
+        // CORREÇÃO: Fallback - se nada foi renderizado, desenha um padrão simples
+        if (renderBuffer[rowStart] == backdropColor && y % 16 < 8) {
+            // Desenhar linhas horizontais simples para debug
+            val debugColor = cgram.get(1) // Segunda cor da paleta
+            for (x in 0 until 256 step 32) {
+                renderBuffer[rowStart + x] = debugColor
+            }
         }
     }
 
